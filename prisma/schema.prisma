@@ -1,0 +1,893 @@
+// This is your Prisma schema file,
+// learn more it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+/// 组织层级
+enum OrgLevel {
+  DEPARTMENT
+  DIVISION
+  GROUP
+}
+
+/// 成员角色
+enum MemberRole {
+  MEMBER
+  LEADER
+  MANAGER
+  DIRECTOR
+}
+
+/// 成员职级
+enum MemberLevel {
+  P1
+  P2
+  P3
+  P4
+  P5
+  P6
+  P7
+  P8
+}
+
+/// 成员状态
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+  TRANSFERRED
+}
+
+/// 项目类型
+enum ProjectType {
+  INTERNAL
+  EXTERNAL
+  RESEARCH
+  MAINTENANCE
+  STRATEGIC
+  REGULAR
+  TECHNICAL
+}
+
+/// 项目优先级
+enum ProjectPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// 项目状态
+enum ProjectStatus {
+  PLANNING
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+/// 项目健康度
+enum ProjectHealth {
+  HEALTHY
+  AT_RISK
+  CRITICAL
+}
+
+/// 效能实体类型
+enum EntityType {
+  MEMBER
+  TEAM
+  PROJECT
+}
+
+/// 效能周期类型
+enum PeriodType {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+/// 效能配置类型
+enum ConfigType {
+  WEIGHT
+  THRESHOLD
+  PARAMETER
+}
+
+/// 迭代状态
+enum SprintStatus {
+  PLANNING
+  ACTIVE
+  REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+/// 需求状态
+enum RequirementStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  BLOCKED
+  REJECTED
+}
+
+/// 需求优先级
+enum RequirementPriority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// 需求复杂度
+enum RequirementComplexity {
+  LOW
+  MEDIUM
+  HIGH
+  VERY_HIGH
+}
+
+/// 需求来源
+enum RequirementSource {
+  TAPD
+  MANUAL
+}
+
+/// 工时任务类型
+enum TaskType {
+  DEVELOPMENT
+  TESTING
+  REVIEW
+  MEETING
+  OTHER
+}
+
+/// 工时来源
+enum WorkHourSource {
+  TAPD
+  MANUAL
+}
+
+/// 缺陷严重程度
+enum DefectSeverity {
+  FATAL
+  MAJOR
+  MINOR
+  SUGGESTION
+}
+
+/// 缺陷状态
+enum DefectStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REJECTED
+  DEFERRED
+}
+
+/// 用户角色
+enum UserRole {
+  ADMIN
+  MANAGER
+  LEADER
+  PM
+  HR
+  EXECUTIVE
+  MEMBER
+}
+
+/// 用户状态
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  LOCKED
+}
+
+/// 同步来源
+enum SyncSource {
+  TAPD
+  MANUAL
+}
+
+/// 同步类型
+enum SyncType {
+  FULL
+  INCREMENTAL
+}
+
+/// 同步状态
+enum SyncStatus {
+  SUCCESS
+  FAILED
+  RUNNING
+}
+
+/// 审计操作
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  SYNC
+}
+
+/// 审计资源类型
+enum ResourceType {
+  MEMBER
+  PROJECT
+  SPRINT
+  REQUIREMENT
+  DEFECT
+  CONFIG
+  USER
+}
+
+// ============================================================
+// Models
+// ============================================================
+
+/// 组织架构
+model Organization {
+  id        String     @id @default(uuid()) @map("id")
+  name      String     @map("name")
+  parentId  String?    @map("parent_id")
+  level     OrgLevel   @map("level") @default(DEPARTMENT)
+  createdAt DateTime   @map("created_at") @default(now())
+  updatedAt DateTime   @map("updated_at") @updatedAt
+
+  // Relations
+  parent    Organization?  @relation("OrgHierarchy", fields: [parentId], references: [id])
+  children  Organization[] @relation("OrgHierarchy")
+  teams     Team[]
+
+  @@map("organization")
+}
+
+/// 团队
+model Team {
+  id         String   @id @default(uuid()) @map("id")
+  name       String   @map("name")
+  orgId      String   @map("org_id")
+  leaderId   String?  @map("leader_id")
+  techStack  String   @map("tech_stack") @default("[]")
+  createdAt  DateTime @map("created_at") @default(now())
+
+  // Relations
+  org        Organization @relation(fields: [orgId], references: [id])
+  leader     Member?      @relation("TeamLeader", fields: [leaderId], references: [id])
+  members    Member[]
+  projects   Project[]
+
+  @@map("team")
+}
+
+/// 成员
+model Member {
+  id         String       @id @default(uuid()) @map("id")
+  name       String       @map("name")
+  employeeNo String       @map("employee_no") @unique
+  teamId     String       @map("team_id")
+  role       MemberRole   @map("role") @default(MEMBER)
+  level      MemberLevel  @map("level") @default(P1)
+  skills     String       @map("skills") @default("{}")
+  status     MemberStatus @map("status") @default(ACTIVE)
+  joinedAt   DateTime     @map("joined_at") @default(now())
+
+  // Relations
+  team       Team        @relation(fields: [teamId], references: [id])
+  ledTeams   Team[]      @relation("TeamLeader")
+  userAccount UserAccount?
+  ownedProjects Project[] @relation("ProjectOwner")
+  assignedRequirements Requirement[] @relation("RequirementAssignee")
+  workHours  WorkHour[]
+  reportedDefects Defect[] @relation("DefectReporter")
+  assignedDefects Defect[] @relation("DefectAssignee")
+
+  @@map("member")
+}
+
+/// 项目
+model Project {
+  id           String         @id @default(uuid()) @map("id")
+  name         String         @map("name")
+  code         String         @map("code") @unique
+  type         ProjectType    @map("type") @default(INTERNAL)
+  priority     ProjectPriority @map("priority") @default(MEDIUM)
+  status       ProjectStatus  @map("status") @default(PLANNING)
+  health       ProjectHealth  @map("health") @default(HEALTHY)
+  progress     Float          @map("progress") @default(0)
+  delayDays    Int            @map("delay_days") @default(0)
+  resourceRate Float          @map("resource_rate") @default(0)
+  startDate    DateTime?      @map("start_date")
+  endDate      DateTime?      @map("end_date")
+  ownerId      String?        @map("owner_id")
+  teamId       String         @map("team_id")
+  budget       Float?         @map("budget")
+  description  String?        @map("description")
+  category     String         @map("category") @default("REGULAR")
+  okrName      String         @map("okr_name") @default("")
+  partner      String         @map("partner") @default("")
+  po           String         @map("po") @default("")
+  createdAt    DateTime       @map("created_at") @default(now())
+
+  // Relations
+  owner        Member?        @relation("ProjectOwner", fields: [ownerId], references: [id])
+  team         Team           @relation(fields: [teamId], references: [id])
+  okrs         ProjectOkr[]
+  costs        ProjectCost[]
+  rois         ProjectRoi[]
+  milestones   ProjectMilestone[]
+  sprints        Sprint[]
+  mappings       ProjectMapping[]
+  workHours    WorkHour[]
+  defects      Defect[]
+
+  @@index([status])
+  @@index([category])
+  @@index([okrName])
+  @@index([ownerId])
+  @@index([teamId])
+  @@index([createdAt])
+  @@map("project")
+}
+
+/// 项目OKR关联
+model ProjectOkr {
+  id            String   @id @default(uuid()) @map("id")
+  projectId     String   @map("project_id")
+  okrCode       String   @map("okr_code")
+  okrName       String   @map("okr_name")
+  quarter       String   @map("quarter")
+  targetPercent Float    @map("target_percent") @default(0)
+  actualPercent Float    @map("actual_percent") @default(0)
+
+  // Relations
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_okr")
+}
+
+/// 项目成本
+model ProjectCost {
+  id           String   @id @default(uuid()) @map("id")
+  projectId    String   @map("project_id")
+  quarter      String   @map("quarter")
+  laborCost    Float    @map("labor_cost") @default(0)
+  infraCost    Float    @map("infra_cost") @default(0)
+  externalCost Float    @map("external_cost") @default(0)
+  totalCost    Float    @map("total_cost") @default(0)
+  target       String   @map("target") @default("")
+  dataSource   String   @map("data_source") @default("manual")
+
+  // Relations
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_cost")
+}
+
+/// 项目ROI
+model ProjectRoi {
+  id             String   @id @default(uuid()) @map("id")
+  projectId      String   @map("project_id")
+  quarter        String   @map("quarter")
+  revenue        Float    @map("revenue") @default(0)
+  costSaving     Float    @map("cost_saving") @default(0)
+  efficiencyGain Float    @map("efficiency_gain") @default(0)
+  totalBenefit   Float    @map("total_benefit") @default(0)
+  totalCost      Float    @map("total_cost") @default(0)
+  roiPercent     Float    @map("roi_percent") @default(0)
+  targetRoi      Float    @map("target_roi") @default(0)
+
+  // Relations
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_roi")
+}
+
+/// 项目季度里程碑
+model ProjectMilestone {
+  id           String   @id @default(uuid()) @map("id")
+  projectId    String   @map("project_id")
+  quarter      String   @map("quarter")
+  target       String   @map("target") @default("")
+  achievement  String   @map("achievement") @default("")
+  progress     Float    @map("progress") @default(0)
+  sortOrder    Int      @map("sort_order") @default(0)
+
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, quarter])
+  @@map("project_milestone")
+}
+
+/// 效能得分
+model EfficiencyScore {
+  id             String   @id @default(uuid()) @map("id")
+  entityType     EntityType @map("entity_type")
+  entityId       String   @map("entity_id")
+  periodType     PeriodType @map("period_type")
+  periodValue    String   @map("period_value")
+  deliveryScore  Float    @map("delivery_score") @default(0)
+  qualityScore   Float    @map("quality_score") @default(0)
+  completionRate Float    @map("completion_rate") @default(0)
+  defectScore    Float    @map("defect_score") @default(0)
+  totalScore     Float    @map("total_score") @default(0)
+  rank           Int?     @map("rank")
+  computedAt     DateTime @map("computed_at") @default(now())
+
+  @@unique([entityType, entityId, periodType, periodValue])
+  @@map("efficiency_score")
+}
+
+/// 效能配置
+model EfficiencyConfig {
+  id         String     @id @default(uuid()) @map("id")
+  configType ConfigType @map("config_type")
+  configKey  String     @map("config_key") @unique
+  configValue String    @map("config_value")
+  updatedBy  String?    @map("updated_by")
+  updatedAt  DateTime   @map("updated_at") @updatedAt
+
+  @@map("efficiency_config")
+}
+
+/// 迭代
+model Sprint {
+  id             String       @id @default(uuid()) @map("id")
+  projectId      String       @map("project_id")
+  name           String       @map("name")
+  status         SprintStatus @map("status") @default(PLANNING)
+  startDate      DateTime     @map("start_date")
+  endDate        DateTime     @map("end_date")
+  planCount      Int          @map("plan_count") @default(0)
+  completedCount Int          @map("completed_count") @default(0)
+  healthScore    Float?       @map("health_score")
+
+  // Relations
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirements   Requirement[]
+  workHours      WorkHour[]
+  defects        Defect[]
+
+  @@map("sprint")
+}
+
+/// 需求
+model Requirement {
+  id            String              @id @default(uuid()) @map("id")
+  tapdId        String?             @map("tapd_id") @unique
+  sprintId      String              @map("sprint_id")
+  title         String              @map("title")
+  status        RequirementStatus   @map("status") @default(TODO)
+  priority      RequirementPriority @map("priority") @default(MEDIUM)
+  complexity    RequirementComplexity @map("complexity") @default(MEDIUM)
+  assigneeId    String?             @map("assignee_id")
+  createdInTapd DateTime?           @map("created_in_tapd")
+  completedAt   DateTime?           @map("completed_at")
+  blockedDays   Int                 @map("blocked_days") @default(0)
+  leadTime      Int?                @map("lead_time")
+  source        RequirementSource   @map("source") @default(TAPD)
+
+  // Relations
+  sprint        Sprint  @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  assignee      Member? @relation("RequirementAssignee", fields: [assigneeId], references: [id])
+
+  @@map("requirement")
+}
+
+/// 工时
+model WorkHour {
+  id        String       @id @default(uuid()) @map("id")
+  tapdId    String?      @map("tapd_id")
+  memberId  String       @map("member_id")
+  projectId String       @map("project_id")
+  sprintId  String       @map("sprint_id")
+  date      DateTime     @map("date")
+  hours     Float        @map("hours") @default(0)
+  taskType  TaskType     @map("task_type") @default(DEVELOPMENT)
+  source    WorkHourSource @map("source") @default(TAPD)
+
+  // Relations
+  member    Member  @relation(fields: [memberId], references: [id])
+  project   Project @relation(fields: [projectId], references: [id])
+  sprint    Sprint  @relation(fields: [sprintId], references: [id])
+
+  @@map("work_hour")
+}
+
+/// 缺陷
+model Defect {
+  id              String       @id @default(uuid()) @map("id")
+  tapdId          String?      @map("tapd_id") @unique
+  projectId       String       @map("project_id")
+  sprintId        String       @map("sprint_id")
+  title           String       @map("title")
+  severity        DefectSeverity @map("severity") @default(MINOR)
+  status          DefectStatus @map("status") @default(OPEN)
+  reporterId      String?      @map("reporter_id")
+  assigneeId      String?      @map("assignee_id")
+  createdAt       DateTime     @map("created_at") @default(now())
+  resolvedAt      DateTime?    @map("resolved_at")
+  resolutionHours Float?       @map("resolution_hours")
+
+  // Relations
+  project         Project @relation(fields: [projectId], references: [id])
+  sprint          Sprint  @relation(fields: [sprintId], references: [id])
+  reporter        Member? @relation("DefectReporter", fields: [reporterId], references: [id])
+  assignee        Member? @relation("DefectAssignee", fields: [assigneeId], references: [id])
+
+  @@map("defect")
+}
+
+/// 用户账号
+model UserAccount {
+  id        String     @id @default(uuid()) @map("id")
+  memberId  String     @unique @map("member_id")
+  email     String     @unique @map("email")
+  role      UserRole   @map("role") @default(MEMBER)
+  status    UserStatus @map("status") @default(ACTIVE)
+  lastLogin DateTime?  @map("last_login")
+
+  // Relations
+  member    Member     @relation(fields: [memberId], references: [id])
+
+  @@map("user_account")
+}
+
+/// 同步日志
+model SyncLog {
+  id           String     @id @default(uuid()) @map("id")
+  source       SyncSource @map("source") @default(TAPD)
+  syncType     SyncType   @map("sync_type") @default(INCREMENTAL)
+  status       SyncStatus @map("status") @default(RUNNING)
+  recordsCount Int        @map("records_count") @default(0)
+  errorMessage String?    @map("error_message")
+  startedAt    DateTime   @map("started_at") @default(now())
+  finishedAt   DateTime?  @map("finished_at")
+
+  @@map("sync_log")
+}
+
+/// 审计日志
+model AuditLog {
+  id           String      @id @default(uuid()) @map("id")
+  userId       String      @map("user_id")
+  action       AuditAction @map("action")
+  resourceType ResourceType @map("resource_type")
+  resourceId   String      @map("resource_id")
+  detail       String      @map("detail") @default("{}")
+  ipAddress    String?     @map("ip_address")
+  createdAt    DateTime    @map("created_at") @default(now())
+
+  @@map("audit_log")
+}
+
+/// 项目归属映射（平台项目 ↔ TAPD项目归属 多对多）
+model ProjectMapping {
+  id              String   @id @default(uuid()) @map("id")
+  projectId       String   @map("project_id")
+  tapdBelonging   String   @map("tapd_belonging")
+  createdAt       DateTime @map("created_at") @default(now())
+  updatedAt       DateTime @map("updated_at") @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, tapdBelonging])
+  @@map("project_mapping")
+}
+
+/// 团队配置（团队 ↔ TAPD项目 映射 + 排名开关）
+model TeamConfig {
+  id                String   @id @default(uuid()) @map("id")
+  name              String   @map("name")
+  tapdProjectIds    String   @default("[]") @map("tapd_project_ids") // JSON数组
+  enableTeamRanking Boolean  @default(true) @map("enable_team_ranking")
+  enableHrRanking   Boolean  @default(true) @map("enable_hr_ranking")
+  createdAt         DateTime @map("created_at") @default(now())
+  updatedAt         DateTime @map("updated_at") @updatedAt
+
+  @@map("team_config")
+}
+
+/// 系统配置（KV 存储）
+model SystemSetting {
+  key       String   @id @map("key")
+  value     String   @map("value")
+  updatedAt DateTime @map("updated_at") @updatedAt
+
+  @@map("system_setting")
+}
+
+// ============================================================
+// TAPD 数据落库表
+// ============================================================
+
+/// TAPD 需求数据
+/// TAPD 需求数据（完整字段）
+model TapdStory {
+  id               String    @id @map("id")
+  name             String    @map("name")
+  description      String?   @map("description")
+  status           String    @map("status")
+  priority         String?   @map("priority")
+  priorityLabel    String?   @map("priority_label")
+  owner            String?   @map("owner")
+  cc               String?   @map("cc") @default("")
+  creator          String?   @map("creator")
+  developer        String?   @map("developer")
+  created          DateTime? @map("created")
+  modified         DateTime? @map("modified")
+  completed        DateTime? @map("completed")
+  begin            DateTime? @map("begin")
+  due              DateTime? @map("due")
+  effort           Float?    @map("effort")
+  effortCompleted  Float?    @map("effort_completed")
+  remain           Float?    @map("remain")
+  exceed           Float?    @map("exceed")
+  workspaceId      String    @map("workspace_id")
+  workspaceName    String?   @map("workspace_name")
+  iterationId      String?   @map("iteration_id")
+  iterationName    String?   @map("iteration_name")
+  // 系统字段
+  version          String?   @map("version")
+  module           String?   @map("module")
+  feature          String?   @map("feature")
+  testFocus        String?   @map("test_focus")
+  size             Int?      @map("size")
+  businessValue    Int?      @map("business_value")
+  categoryId       String?   @map("category_id")
+  releaseId        String?   @map("release_id")
+  source           String?   @map("source")
+  type             String?   @map("type")
+  label            String?   @map("label")
+  workitemTypeId   String?   @map("workitem_type_id")
+  parentId         String?   @map("parent_id")
+  childrenId       String?   @map("children_id")
+  ancestorId       String?   @map("ancestor_id")
+  isArchived       Boolean?  @map("is_archived") @default(false)
+  confidential     Boolean?  @map("confidential") @default(false)
+  level            Int?      @map("level")
+  bugId            String?   @map("bug_id")
+  templatedId      String?   @map("templated_id")
+  createdFrom      String?   @map("created_from")
+  // 自定义字段 (支持最多100个)
+  customFieldOne   String?   @map("custom_field_one")
+  customFieldTwo   String?   @map("custom_field_two")
+  customFieldThree String?   @map("custom_field_three")
+  customFieldFour  String?   @map("custom_field_four")
+  customFieldFive  String?   @map("custom_field_five")
+  customFieldSix   String?   @map("custom_field_six")
+  customFieldSeven String?   @map("custom_field_seven")
+  customFieldEight String?   @map("custom_field_eight")
+  customField9     String?   @map("custom_field_9")
+  customField10    String?   @map("custom_field_10")
+  customField11    String?   @map("custom_field_11")
+  customField12    String?   @map("custom_field_12")
+  customField13    String?   @map("custom_field_13")
+  customField14    String?   @map("custom_field_14")
+  customField15    String?   @map("custom_field_15")
+  customField16    String?   @map("custom_field_16")
+  customField17    String?   @map("custom_field_17")
+  customField18    String?   @map("custom_field_18")
+  customField19    String?   @map("custom_field_19")
+  customField20    String?   @map("custom_field_20")
+  // 额外数据（存储 custom_field_21 ~ custom_field_100）
+  extraData        Json?     @map("extra_data")
+  // 原始 JSON 和同步时间
+  rawJson          Json?     @map("raw_json")
+  syncedAt         DateTime  @map("synced_at") @default(now())
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([created])
+  @@index([completed])
+  @@index([iterationId])
+  @@index([owner])
+  @@index([creator])
+  @@map("tapd_story")
+}
+
+/// TAPD 任务数据（完整字段）
+model TapdTask {
+  id               String    @id @map("id")
+  name             String    @map("name")
+  description      String?   @map("description")
+  status           String    @map("status")
+  priority         String?   @map("priority")
+  priorityLabel    String?   @map("priority_label")
+  owner            String?   @map("owner")
+  cc               String?   @map("cc") @default("")
+  creator          String?   @map("creator")
+  created          DateTime? @map("created")
+  modified         DateTime? @map("modified")
+  completed        DateTime? @map("completed")
+  begin            DateTime? @map("begin")
+  due              DateTime? @map("due")
+  effort           Float?    @map("effort")
+  effortCompleted  Float?    @map("effort_completed")
+  remain           Float?    @map("remain")
+  exceed           Float?    @map("exceed")
+  progress         Int?      @map("progress")
+  storyId          String?   @map("story_id")
+  workspaceId      String    @map("workspace_id")
+  iterationId      String?   @map("iteration_id")
+  releaseId        String?   @map("release_id")
+  label            String?   @map("label")
+  hasAttachment    Boolean?  @map("has_attachment") @default(false)
+  // 自定义字段
+  customFieldOne   String?   @map("custom_field_one")
+  customFieldTwo   String?   @map("custom_field_two")
+  customFieldThree String?   @map("custom_field_three")
+  customFieldFour  String?   @map("custom_field_four")
+  customFieldFive  String?   @map("custom_field_five")
+  customFieldSix   String?   @map("custom_field_six")
+  customFieldSeven String?   @map("custom_field_seven")
+  customFieldEight String?   @map("custom_field_eight")
+  customField9     String?   @map("custom_field_9")
+  customField10    String?   @map("custom_field_10")
+  // 额外数据（存储 custom_field_11 ~ custom_field_50）
+  extraData        Json?     @map("extra_data")
+  // 原始 JSON 和同步时间
+  rawJson          Json?     @map("raw_json")
+  syncedAt         DateTime  @map("synced_at") @default(now())
+
+  @@index([storyId])
+  @@index([workspaceId])
+  @@index([status])
+  @@index([owner])
+  @@index([iterationId])
+  @@map("tapd_task")
+}
+
+/// TAPD 迭代数据（完整字段）
+model TapdIteration {
+  id             String    @id @map("id")
+  name           String    @map("name")
+  workspaceId    String    @map("workspace_id")
+  description    String?   @map("description")
+  startDate      DateTime? @map("start_date")
+  endDate        DateTime? @map("end_date")
+  status         String?   @map("status")
+  creator        String?   @map("creator")
+  created        DateTime? @map("created")
+  modified       DateTime? @map("modified")
+  completed      DateTime? @map("completed")
+  locker         String?   @map("locker")
+  workitemTypeId String?   @map("workitem_type_id")
+  planAppId      String?   @map("plan_app_id")
+  releaseId      String?   @map("release_id")
+  // 自定义字段
+  customField1   String?   @map("custom_field_1")
+  customField2   String?   @map("custom_field_2")
+  customField3   String?   @map("custom_field_3")
+  customField4   String?   @map("custom_field_4")
+  customField5   String?   @map("custom_field_5")
+  // 额外数据（存储 custom_field_6 ~ custom_field_50）
+  extraData      Json?     @map("extra_data")
+  rawJson        Json?     @map("raw_json")
+  syncedAt       DateTime  @map("synced_at") @default(now())
+
+  @@index([workspaceId])
+  @@index([status])
+  @@map("tapd_iteration")
+}
+
+/// TAPD 项目信息
+model TapdWorkspace {
+  id        String   @id @map("id")
+  name      String   @map("name")
+  status    String?  @map("status")
+  syncedAt  DateTime @map("synced_at") @default(now())
+
+  @@map("tapd_workspace")
+}
+
+/// TAPD 同步记录
+model TapdSyncRecord {
+  id             String    @id @default(cuid()) @map("id")
+  syncType       String    @map("sync_type") @default("full")
+  workspaceIds   Json      @map("workspace_ids") @default("[]")
+  dataTypes      Json      @map("data_types") @default("[\"story\", \"task\", \"iteration\"]")
+  status         String    @map("status") @default("running")
+  progress       Int       @map("progress") @default(0)
+  storyCount     Int       @map("story_count") @default(0)
+  taskCount      Int       @map("task_count") @default(0)
+  iterationCount Int       @map("iteration_count") @default(0)
+  bugCount       Int       @map("bug_count") @default(0)
+  timesheetCount Int       @map("timesheet_count") @default(0)
+  errorMsg       String?   @map("error_msg")
+  startedAt      DateTime  @map("started_at") @default(now())
+  finishedAt     DateTime? @map("finished_at")
+  createdBy      String?   @map("created_by")
+
+  @@index([status])
+  @@index([startedAt])
+  @@map("tapd_sync_record")
+}
+
+/// TAPD 缺陷数据（完整字段）
+model TapdBug {
+  id              String    @id @map("id")
+  title           String    @map("title")
+  description     String?   @map("description")
+  status          String    @map("status")
+  priority        String?   @map("priority")
+  priorityLabel   String?   @map("priority_label")
+  severity        String?   @map("severity")
+  currentOwner    String?   @map("current_owner")
+  reporter        String?   @map("reporter")
+  cc              String?   @map("cc") @default("")
+  de              String?   @map("de")
+  te              String?   @map("te")
+  created         DateTime? @map("created")
+  modified        DateTime? @map("modified")
+  resolved        DateTime? @map("resolved")
+  closed          DateTime? @map("closed")
+  workspaceId     String    @map("workspace_id")
+  iterationId     String?   @map("iteration_id")
+  module          String?   @map("module")
+  releaseId       String?   @map("release_id")
+  versionReport   String?   @map("version_report")
+  versionFix      String?   @map("version_fix")
+  versionTest     String?   @map("version_test")
+  versionClose    String?   @map("version_close")
+  source          String?   @map("source")
+  bugtype         String?   @map("bugtype")
+  frequency       String?   @map("frequency")
+  resolution      String?   @map("resolution")
+  label           String?   @map("label")
+  // 自定义字段
+  customFieldOne  String?   @map("custom_field_one")
+  customFieldTwo  String?   @map("custom_field_two")
+  customFieldThree String?  @map("custom_field_three")
+  customFieldFour String?   @map("custom_field_four")
+  customFieldFive String?   @map("custom_field_five")
+  // 额外数据（存储 custom_field_6 ~ custom_field_50）
+  extraData      Json?     @map("extra_data")
+  rawJson         Json?     @map("raw_json")
+  syncedAt        DateTime  @map("synced_at") @default(now())
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([currentOwner])
+  @@index([iterationId])
+  @@map("tapd_bug")
+}
+
+/// TAPD 工时数据
+model TapdTimesheet {
+  id          String    @id @map("id")
+  entityType  String    @map("entity_type")  // story, task, bug
+  entityId    String    @map("entity_id")
+  timespent   Float     @map("timespent")
+  spentdate   DateTime? @map("spentdate")
+  owner       String?   @map("owner")
+  memo        String?   @map("memo")
+  workspaceId String    @map("workspace_id")
+  created     DateTime? @map("created")
+  modified    DateTime? @map("modified")
+  isDelete    Boolean   @map("is_delete") @default(false)
+  rawJson     Json?     @map("raw_json")
+  syncedAt    DateTime  @map("synced_at") @default(now())
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([workspaceId])
+  @@index([owner])
+  @@map("tapd_timesheet")
+}

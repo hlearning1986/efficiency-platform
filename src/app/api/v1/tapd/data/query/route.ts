@@ -1,0 +1,229 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+/**
+ * GET /api/v1/tapd/data/query - 查询落库的 TAPD 数据
+ */
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const type = searchParams.get('type') || 'story';
+    const page = parseInt(searchParams.get('page') || '1', 10);
+    const pageSize = parseInt(searchParams.get('pageSize') || '20', 10);
+    const workspaceId = searchParams.get('workspaceId');
+    const status = searchParams.get('status');
+    const iterationId = searchParams.get('iterationId');
+    const owner = searchParams.get('owner');
+    const createdStart = searchParams.get('createdStart');
+    const createdEnd = searchParams.get('createdEnd');
+    const completedStart = searchParams.get('completedStart');
+    const completedEnd = searchParams.get('completedEnd');
+    const search = searchParams.get('search');
+
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any[] = [];
+    let total = 0;
+
+    switch (type) {
+      case 'story': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const where: Record<string, unknown> = {};
+        if (workspaceId) where.workspaceId = workspaceId;
+        if (status) where.status = status;
+        if (iterationId) where.iterationId = iterationId;
+        if (owner) where.owner = owner;
+        if (search) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { id: { contains: search, mode: 'insensitive' } },
+          ];
+        }
+        
+        // 时间范围筛选
+        if (createdStart || createdEnd) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).created = {};
+          if (createdStart) (where as any).created.gte = new Date(createdStart);
+          if (createdEnd) (where as any).created.lte = new Date(createdEnd + 'T23:59:59.999Z');
+        }
+        
+        if (completedStart || completedEnd) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).completed = {};
+          if (completedStart) (where as any).completed.gte = new Date(completedStart);
+          if (completedEnd) (where as any).completed.lte = new Date(completedEnd + 'T23:59:59.999Z');
+        }
+
+        [data, total] = await Promise.all([
+          prisma.tapdStory.findMany({
+            where,
+            skip,
+            take,
+            orderBy: { created: 'desc' },
+          }),
+          prisma.tapdStory.count({ where }),
+        ]);
+        
+        // 补充缺失的迭代名称：如果 iterationName 为空但有 iterationId，则从迭代表查找
+        if (data.length > 0) {
+          const storiesNeedingIterationName = data.filter(
+            (s: Record<string, unknown>) => 
+              s.iterationId && (!s.iterationName || s.iterationName === '')
+          );
+          
+          if (storiesNeedingIterationName.length > 0) {
+            const iterationIds = [...new Set(
+              storiesNeedingIterationName.map((s: Record<string, unknown>) => String(s.iterationId))
+            )];
+            
+            const iterations = await prisma.tapdIteration.findMany({
+              where: {
+                id: { in: iterationIds },
+              },
+              select: {
+                id: true,
+                name: true,
+              },
+            });
+            
+            const iterationMap = new Map(iterations.map((i) => [i.id, i.name]));
+            
+            data = data.map((story: Record<string, unknown>) => {
+              if (!story.iterationName && story.iterationId && iterationMap.has(String(story.iterationId))) {
+                return {
+                  ...story,
+                  iterationName: iterationMap.get(String(story.iterationId)),
+                };
+              }
+              return story;
+            });
+          }
+        }
+        break;
+      }
+
+      case 'task': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const where: Record<string, unknown> = {};
+        if (workspaceId) where.workspaceId = workspaceId;
+        if (status) where.status = status;
+        if (owner) where.owner = owner;
+        if (search) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { id: { contains: search, mode: 'insensitive' } },
+          ];
+        }
+        
+        if (createdStart || createdEnd) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).created = {};
+          if (createdStart) (where as any).created.gte = new Date(createdStart);
+          if (createdEnd) (where as any).created.lte = new Date(createdEnd + 'T23:59:59.999Z');
+        }
+
+        [data, total] = await Promise.all([
+          prisma.tapdTask.findMany({
+            where,
+            skip,
+            take,
+            orderBy: { created: 'desc' },
+          }),
+          prisma.tapdTask.count({ where }),
+        ]);
+        break;
+      }
+
+      case 'iteration': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const where: Record<string, unknown> = {};
+        if (workspaceId) where.workspaceId = workspaceId;
+        if (status) where.status = status;
+
+        [data, total] = await Promise.all([
+          prisma.tapdIteration.findMany({
+            where,
+            skip,
+            take,
+            orderBy: { startDate: 'desc' },
+          }),
+          prisma.tapdIteration.count({ where }),
+        ]);
+        break;
+      }
+
+      case 'bug': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const where: Record<string, unknown> = {};
+        if (workspaceId) where.workspaceId = workspaceId;
+        if (status) where.status = status;
+        if (owner) where.currentOwner = owner;
+        if (search) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).OR = [
+            { title: { contains: search, mode: 'insensitive' } },
+            { id: { contains: search, mode: 'insensitive' } },
+          ];
+        }
+        
+        if (createdStart || createdEnd) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (where as any).created = {};
+          if (createdStart) (where as any).created.gte = new Date(createdStart);
+          if (createdEnd) (where as any).created.lte = new Date(createdEnd + 'T23:59:59.999Z');
+        }
+
+        [data, total] = await Promise.all([
+          prisma.tapdBug.findMany({
+            where,
+            skip,
+            take,
+            orderBy: { created: 'desc' },
+          }),
+          prisma.tapdBug.count({ where }),
+        ]);
+        break;
+      }
+
+      case 'timesheet': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const where: Record<string, unknown> = {};
+        if (workspaceId) where.workspaceId = workspaceId;
+        if (owner) where.owner = owner;
+
+        [data, total] = await Promise.all([
+          prisma.tapdTimesheet.findMany({
+            where,
+            skip,
+            take,
+            orderBy: { spentdate: 'desc' },
+          }),
+          prisma.tapdTimesheet.count({ where }),
+        ]);
+        break;
+      }
+
+      default:
+        return NextResponse.json({ success: false, message: '不支持的数据类型' }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      data,
+      total,
+      page,
+      pageSize,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '查询数据失败';
+    console.error('GET /api/v1/tapd/data/query error:', error);
+    return NextResponse.json({ success: false, message }, { status: 500 });
+  }
+}

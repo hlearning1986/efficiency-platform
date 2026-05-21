@@ -1,0 +1,56 @@
+{
+  "name": "efficiency-platform",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.1.1",
+    "@ant-design/pro-components": "^2.8.10",
+    "@libsql/client": "^0.17.3",
+    "@opentapd/tapd-node-sdk": "^1.67.0",
+    "@prisma/adapter-better-sqlite3": "^7.8.0",
+    "@prisma/adapter-libsql": "^7.8.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "antd": "^5.29.3",
+    "axios": "^1.15.2",
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.6",
+    "exceljs": "^4.4.0",
+    "ioredis": "^5.10.1",
+    "libsql": "^0.5.29",
+    "next": "14.2.35",
+    "next-auth": "^5.0.0-beta.31",
+    "node-cron": "^4.2.1",
+    "pg": "^8.20.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "recharts": "^3.8.1",
+    "sqlite3": "^6.0.1",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.35",
+    "postcss": "^8",
+    "prisma": "^7.8.0",
+    "tailwindcss": "^3.4.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}
