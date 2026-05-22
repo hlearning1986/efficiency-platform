@@ -453,6 +453,9 @@ export default function TapdDataManagerPage() {
   
   // 防止重复提示消息
   const [syncNotified, setSyncNotified] = useState(false);
+  // 🛠️ 使用 ref 避免闭包陷阱（setInterval 中读取最新值）
+  const syncNotifiedRef = useRef(false);
+
   
   /**
    * 根据业务名称获取字段键名（如"项目归属" → "custom_field_11" 或 "custom_field_13"）
@@ -853,6 +856,7 @@ export default function TapdDataManagerPage() {
     setSyncProgress(0);
     setSyncMsg('正在创建同步任务...');
     setSyncNotified(false);
+    syncNotifiedRef.current = false;  // 🛠️ 同步重置 ref
     
     try {
       // 创建同步任务
@@ -905,8 +909,11 @@ export default function TapdDataManagerPage() {
               clearInterval(pollInterval);
               setSyncing(false);
               setSyncMsg(`同步完成！需求 ${job.storyCount || 0} 条，任务 ${job.taskCount || 0} 条，迭代 ${job.iterationCount || 0} 条`);
-              if (!syncNotified) {
-                setSyncNotified(true);
+              
+              // 🛠️ 使用 ref 避免闭包陷阱（读取最新值）
+              if (!syncNotifiedRef.current) {
+                syncNotifiedRef.current = true;  // 立即更新 ref
+                setSyncNotified(true);  // 同步更新 state
                 message.success('数据同步成功');
               }
               loadDataStats(getCurrentFilters());
@@ -915,7 +922,9 @@ export default function TapdDataManagerPage() {
               clearInterval(pollInterval);
               setSyncing(false);
               setSyncMsg(`同步失败: ${job.errorMsg || '未知错误'}`);
-              if (!syncNotified) {
+              // 🛠️ 失败也使用 ref
+              if (!syncNotifiedRef.current) {
+                syncNotifiedRef.current = true;
                 setSyncNotified(true);
                 message.error('数据同步失败');
               }
