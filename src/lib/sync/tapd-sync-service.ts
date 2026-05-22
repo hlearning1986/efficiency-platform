@@ -4,6 +4,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
+import { batchConvertStatuses } from '@/lib/workflow-status-service';
 
 // ============================================================
 // 类型定义
@@ -257,12 +258,56 @@ function parseFloat2(val: unknown): number | null {
 }
 
 /**
+ * 转换TAPD原始状态为中文标准状态
+ * 使用工作流配置表进行映射，如果未找到映射则保留原始值
+ */
+async function convertStoryStatus(
+  workspaceId: string,
+  rawStatus: string
+): Promise<string> {
+  if (!rawStatus) return rawStatus;
+
+  try {
+    // 尝试从工作流配置表获取映射
+    const mapping = await batchConvertStatuses(workspaceId, [rawStatus], 'story');
+    return mapping.get(rawStatus) || rawStatus;
+  } catch (error) {
+    console.warn(`⚠️ 状态转换失败 [${workspaceId}]: ${rawStatus}, 使用原始值`);
+    return rawStatus;
+  }
+}
+
+/**
+ * 批量预加载工作流映射（优化性能）
+ * 在同步开始前调用，避免逐条查询
+ */
+async function preloadWorkflowMappings(
+  workspaceIds: string[]
+): Promise<Map<string, Map<string, string>>> {
+  
+  const allMappings = new Map<string, Map<string, string>>();
+
+  for (const wsId of workspaceIds) {
+    try {
+      const mapping = await batchConvertStatuses(wsId, [], 'story');
+      allMappings.set(wsId, mapping);
+    } catch {
+      console.warn(`⚠️ 无法加载项目 ${wsId} 的工作流映射`);
+      allMappings.set(wsId, new Map());
+    }
+  }
+
+  return allMappings;
+}
+
+/**
  * 批量保存 Stories 到数据库（upsert）
  */
 async function saveStories(
   stories: Record<string, unknown>[],
   workspaceNameMap: Map<string, string>,
   iterationNameMap: Map<string, string>,
+  workflowMappings?: Map<string, Map<string, string>>,
 ) {
   const batchSize = 500;
   for (let i = 0; i < stories.length; i += batchSize) {
@@ -271,12 +316,17 @@ async function saveStories(
       batch.map((s) => {
         const wsId = String(s['workspace_id'] ?? '');
         const iterId = String(s['iteration_id'] ?? '');
+        
+        // 状态转换：使用工作流配置映射
+        const rawStatus = String(s['status'] ?? '');
+        const convertedStatus = workflowMappings?.get(wsId)?.get(rawStatus) || rawStatus;
+        
         return prisma.tapdStory.upsert({
           where: { id: String(s['id']) },
           update: {
             name: String(s['name'] ?? ''),
             description: s['description'] ? String(s['description']) : null,
-            status: String(s['status'] ?? ''),
+            status: convertedStatus,
             priority: s['priority'] ? String(s['priority']) : null,
             owner: s['owner'] ? String(s['owner']) : null,
             cc: s['cc'] ? String(s['cc']) : null,
@@ -313,7 +363,7 @@ async function saveStories(
             id: String(s['id']),
             name: String(s['name'] ?? ''),
             description: s['description'] ? String(s['description']) : null,
-            status: String(s['status'] ?? ''),
+            status: convertedStatus,
             priority: s['priority'] ? String(s['priority']) : null,
             owner: s['owner'] ? String(s['owner']) : null,
             cc: s['cc'] ? String(s['cc']) : null,
@@ -475,6 +525,18 @@ export async function fullSync(options: SyncOptions): Promise<SyncResult> {
       await delay(300);
     }
 
+    // 2.5 预加载工作流状态映射（用于状态转换）
+    onProgress?.('正在加载工作流配置...', 8);
+    let workflowMappings: Map<string, Map<string, string>>;
+    
+    try {
+      workflowMappings = await preloadWorkflowMappings(workspaceIds);
+      console.log(`✅ 已加载 ${workspaceMappings.size} 个项目的工作流配置`);
+    } catch (error) {
+      console.warn('⚠️ 工作流配置加载失败，将使用原始状态值');
+      workflowMappings = new Map();
+    }
+
     // 3. 逐项目拉取并保存数据
     for (let i = 0; i < workspaceIds.length; i++) {
       const wsId = workspaceIds[i];
@@ -498,7 +560,7 @@ export async function fullSync(options: SyncOptions): Promise<SyncResult> {
       // 3.2 拉取 Stories
       onProgress?.(`[${wsName}] 正在拉取需求...`, basePercent + 10);
       const stories = await fetchStories(wsId, headers, { createdBegin, createdEnd });
-      await saveStories(stories, workspaceNameMap, iterNameMap);
+      await saveStories(stories, workspaceNameMap, iterNameMap, workflowMappings);
       totalStories += stories.length;
 
       await delay(500);

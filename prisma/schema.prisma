@@ -891,3 +891,47 @@ model TapdTimesheet {
   @@index([owner])
   @@map("tapd_timesheet")
 }
+
+// ============================================================
+// TAPD 工作流状态映射表（用于状态转换）
+// ============================================================
+
+/// TAPD 工作流状态映射
+/// 存储每个项目的工作流配置，用于将TAPD原始状态转换为中文显示
+model TapdWorkflowStatus {
+  id            Int      @id @default(autoincrement())
+  workspaceId   String   @map("workspace_id")
+  workspaceName String?  @map("workspace_name")
+  system        String   @map("system") @default("story") // story | bug
+  statusKey     String   @map("status_key") // 原始值: resolved, status_6, for_test...
+  statusValue   String   @map("status_value") // 中文显示: 已实现, 待发布, 待测试...
+  sortOrder     Int      @map("sort_order") @default(0)
+  isActive      Boolean  @map("is_active") @default(true)
+  version       String?  @map("version") // TAPD工作流版本号
+  syncedAt      DateTime @map("synced_at") @default(now())
+  createdAt     DateTime @map("created_at") @default(now())
+  updatedAt     DateTime @map("updated_at") @updatedAt
+
+  @@unique([workspaceId, system, statusKey])
+  @@index([workspaceId])
+  @@index([system])
+  @@index([statusKey])
+  @@map("tapd_workflow_status")
+}
+
+/// TAPD 工作流同步日志
+/// 记录每次从TAPD API获取工作流配置的操作
+model TapdWorkflowSyncLog {
+  id           Int      @id @default(autoincrement())
+  workspaceId  String   @map("workspace_id")
+  action       String   @map("action") // init | refresh | force_refresh
+  status       String   @map("status") // success | failed | skipped
+  recordsCount Int      @map("records_count") @default(0)
+  errorMessage String?  @map("error_message")
+  durationMs   Int?     @map("duration_ms")
+  createdAt    DateTime @map("created_at") @default(now())
+
+  @@index([workspaceId])
+  @@index([createdAt])
+  @@map("tapd_workflow_sync_log")
+}

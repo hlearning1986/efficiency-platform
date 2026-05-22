@@ -65,6 +65,7 @@ export const sidebarMenuItems: MenuItem[] = [
   getItem('系统设置', '/settings', <SettingOutlined />, [
     getItem('TAPD 配置', '/settings/tapd', <ApiOutlined />),
     getItem('TAPD 数据管理', '/tapd/data-manager', <DatabaseOutlined />),
+    getItem('TAPD 工作流管理', '/settings/tapd-workflow', <SyncOutlined />),
     getItem('团队配置', '/settings/team-config', <TeamOutlined />),
     getItem('项目归属映射', '/settings/project-mapping', <LinkOutlined />),
     getItem('用户管理', '/settings/users', <SafetyOutlined />),
