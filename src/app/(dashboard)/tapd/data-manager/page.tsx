@@ -1582,7 +1582,16 @@ export default function TapdDataManagerPage() {
         <Table
           columns={columns}
           dataSource={tableData}
-          loading={tableLoading || (filterWorkspaceId && !mappingLoaded)}
+          // 🛠️ 修复：正确处理数组类型的 filterWorkspaceId
+          // 原来的 bug: [] (空数组) 是 truthy，导致一直转圈
+          loading={
+            tableLoading ||
+            (
+              Array.isArray(filterWorkspaceId) &&
+              filterWorkspaceId.length > 0 &&
+              !mappingLoaded
+            )
+          }
           rowKey="id"
           pagination={{
             ...tablePagination,
