@@ -618,8 +618,19 @@ export default function TapdDataManagerPage() {
       try {
         // 从当前筛选条件或URL获取初始workspaceId
         const urlParams = new URLSearchParams(window.location.search);
-        const initialWorkspaceId = urlParams.get('workspaceId') || filterWorkspaceId;
-        
+        const urlWorkspaceId = urlParams.get('workspaceId');
+
+        // 🛠️ 修复：正确处理数组和字符串类型
+        let initialWorkspaceId: string | null = null;
+
+        if (urlWorkspaceId) {
+          // URL参数优先
+          initialWorkspaceId = urlWorkspaceId;
+        } else if (Array.isArray(filterWorkspaceId) && filterWorkspaceId.length > 0) {
+          // 从state取第一个项目（多选时取第一个）
+          initialWorkspaceId = filterWorkspaceId[0];
+        }
+
         if (initialWorkspaceId) {
           console.log('🌐 页面初始化：开始加载工作流状态映射, workspaceId:', initialWorkspaceId);
           await loadWorkflowStatusMap(initialWorkspaceId);
@@ -770,17 +781,39 @@ export default function TapdDataManagerPage() {
   });
   
   const loadDataStats = async (filters?: {
-    workspaceId?: string;
-    status?: string;
-    iterationId?: string;
-    owner?: string;
+    workspaceId?: string | string[];  // 🛠️ 支持数组
+    status?: string | string[];  // 🛠️ 支持数组
+    iterationId?: string | string[];  // 🛠️ 支持数组
+    owner?: string | string[];  // 🛠️ 支持数组
   }) => {
     try {
       const params = new URLSearchParams();
-      if (filters?.workspaceId) params.append('workspaceId', filters.workspaceId);
-      if (filters?.status) params.append('status', filters.status);
-      if (filters?.iterationId) params.append('iterationId', filters.iterationId);
-      if (filters?.owner) params.append('owner', filters.owner);
+
+      // 🛠️ 处理可能为数组的参数
+      if (filters?.workspaceId) {
+        const value = Array.isArray(filters.workspaceId)
+          ? filters.workspaceId.join(',')
+          : filters.workspaceId;
+        params.append('workspaceId', value);
+      }
+      if (filters?.status) {
+        const value = Array.isArray(filters.status)
+          ? filters.status.join(',')
+          : filters.status;
+        params.append('status', value);
+      }
+      if (filters?.iterationId) {
+        const value = Array.isArray(filters.iterationId)
+          ? filters.iterationId.join(',')
+          : filters.iterationId;
+        params.append('iterationId', value);
+      }
+      if (filters?.owner) {
+        const value = Array.isArray(filters.owner)
+          ? filters.owner.join(',')
+          : filters.owner;
+        params.append('owner', value);
+      }
       
       const url = `/api/v1/tapd/data/stats${params.toString() ? `?${params.toString()}` : ''}`;
       const resp = await fetch(url);
