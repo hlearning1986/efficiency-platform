@@ -588,10 +588,10 @@ export default function TapdDataManagerPage() {
     // 检测到映射从空变为有值（说明刚加载完成）
     if (prevKeys.length === 0 && currKeys.length > 0 && filterWorkspaceId) {
       console.log('🎯 检测到 fieldMapping 刚加载完成！自动刷新表格数据...');
-      
+
       // 延迟一帧确保 React 完成状态更新
       setTimeout(() => {
-        handleFilterChange();
+        triggerFilterChange(100);
       }, 100);
     }
     
