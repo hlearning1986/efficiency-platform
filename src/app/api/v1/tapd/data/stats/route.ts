@@ -4,6 +4,31 @@ import { prisma } from '@/lib/prisma';
 /**
  * GET /api/v1/tapd/data/stats - 获取数据概览统计
  */
+
+// 🛠️ 辅助函数：解析逗号分隔的多选值为数组
+function parseMultiValue(value: string | null): string[] | null {
+  if (!value) return null;
+  const values = value.split(',').map(v => v.trim()).filter(v => v);
+  return values.length > 0 ? values : null;
+}
+
+// 🛠️ 辅助函数：构建 IN 查询条件
+function addInCondition(
+  where: Record<string, unknown>,
+  field: string,
+  value: string | null
+) {
+  if (!value) return;
+  const values = parseMultiValue(value);
+  if (values && values.length === 1) {
+    // 单个值，使用等于
+    (where as any)[field] = values[0];
+  } else if (values && values.length > 1) {
+    // 多个值，使用 IN 查询
+    (where as any)[field] = { in: values };
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -12,13 +37,28 @@ export async function GET(req: NextRequest) {
     const iterationId = searchParams.get('iterationId');
     const owner = searchParams.get('owner');
 
-    // 构建筛选条件
+    // 构建筛选条件 - 🛠️ 支持多选（IN查询）
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const storyWhere: Record<string, unknown> = {};
-    if (workspaceId) storyWhere.workspaceId = workspaceId;
-    if (status) storyWhere.status = status;
-    if (iterationId) storyWhere.iterationId = iterationId;
-    if (owner) storyWhere.owner = owner;
+    
+    // 🛠️ 使用 addInCondition 支持单值和多值
+    addInCondition(storyWhere, 'workspaceId', workspaceId);
+    addInCondition(storyWhere, 'status', status);
+    addInCondition(storyWhere, 'iterationId', iterationId);
+    addInCondition(storyWhere, 'owner', owner);
+
+    // 🛠️ 为其他实体也构建支持IN查询的where条件
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const taskWhere: Record<string, unknown> = {};
+    addInCondition(taskWhere, 'workspaceId', workspaceId);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const iterationWhere: Record<string, unknown> = {};
+    addInCondition(iterationWhere, 'workspaceId', workspaceId);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bugWhere: Record<string, unknown> = {};
+    addInCondition(bugWhere, 'workspaceId', workspaceId);
 
     // 数据统计（根据筛选条件动态计算）
     const [
@@ -32,21 +72,9 @@ export async function GET(req: NextRequest) {
       lastSync,
     ] = await Promise.all([
       prisma.tapdStory.count({ where: storyWhere }),
-      prisma.tapdTask.count({
-        where: {
-          ...(workspaceId && { workspaceId }),
-        },
-      }),
-      prisma.tapdIteration.count({
-        where: {
-          ...(workspaceId && { workspaceId }),
-        },
-      }),
-      prisma.tapdBug.count({
-        where: {
-          ...(workspaceId && { workspaceId }),
-        },
-      }),
+      prisma.tapdTask.count({ where: taskWhere }),
+      prisma.tapdIteration.count({ where: iterationWhere }),
+      prisma.tapdBug.count({ where: bugWhere }),
       prisma.tapdTimesheet.count(),
       // 工时统计：预估工时（effort）和 实际工时（effortCompleted）累加
       prisma.tapdStory.aggregate({
@@ -74,9 +102,9 @@ export async function GET(req: NextRequest) {
     // 项目数：取需求中不重复的 workspaceId 数量
     const workspaceCount = projectList.length;
 
-    // 获取迭代列表（用于筛选下拉）
+    // 🛠️ 迭代列表也支持多项目筛选
     const iterationList = await prisma.tapdIteration.findMany({
-      where: workspaceId ? { workspaceId } : {},
+      where: iterationWhere,
       select: {
         id: true,
         name: true,
