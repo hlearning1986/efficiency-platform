@@ -392,6 +392,9 @@ export default function TapdDataManagerPage() {
   // 🛠️ 修复Bug1: 防抖定时器ref
   const filterDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 🛠️ 修复Bug3: 项目切换标志位（避免useEffect重复请求）
+  const isProjectSwitchingRef = useRef(false);
+
   // 🛠️ 同步ref与state（在每次渲染时更新）
   useEffect(() => {
     filterParamsRef.current = {
@@ -907,42 +910,69 @@ export default function TapdDataManagerPage() {
   });
   
   // 加载数据明细
-  const loadTableData = useCallback(async (page = 1, pageSize = 20) => {
+  // 🛠️ 修复：从 ref 读取最新筛选参数，避免 stale closure 问题
+  const loadTableData = useCallback(async (page = 1, pageSize = 20, overrideParams?: {
+    workspaceId?: string;
+    status?: string;
+    iterationId?: string;
+    owner?: string;
+    createdRange?: [dayjs.Dayjs, dayjs.Dayjs] | null;
+    completedRange?: [dayjs.Dayjs, dayjs.Dayjs] | null;
+  }) => {
     setTableLoading(true);
     try {
       const params = new URLSearchParams();
       params.append('type', activeTab);
       params.append('page', String(page));
       params.append('pageSize', String(pageSize));
-      
-      if (filterWorkspaceId) params.append('workspaceId', filterWorkspaceId);
-      if (filterStatus) params.append('status', filterStatus);
-      if (filterIterationId) params.append('iterationId', filterIterationId);
-      if (filterOwner) params.append('owner', filterOwner);
-      if (filterCreatedRange) {
-        params.append('createdStart', filterCreatedRange[0].format('YYYY-MM-DD'));
-        params.append('createdEnd', filterCreatedRange[1].format('YYYY-MM-DD'));
+
+      // 🎯 关键修复：优先使用传入的参数，否则从 ref 读取最新值
+      const currentParams = overrideParams || filterParamsRef.current;
+
+      if (currentParams.workspaceId) params.append('workspaceId', currentParams.workspaceId);
+      if (currentParams.status) params.append('status', currentParams.status);
+      if (currentParams.iterationId) params.append('iterationId', currentParams.iterationId);
+      if (currentParams.owner) params.append('owner', currentParams.owner);
+      if (currentParams.createdRange) {
+        params.append('createdStart', currentParams.createdRange[0].format('YYYY-MM-DD'));
+        params.append('createdEnd', currentParams.createdRange[1].format('YYYY-MM-DD'));
       }
-      if (filterCompletedRange) {
-        params.append('completedStart', filterCompletedRange[0].format('YYYY-MM-DD'));
-        params.append('completedEnd', filterCompletedRange[1].format('YYYY-MM-DD'));
+      if (currentParams.completedRange) {
+        params.append('completedStart', currentParams.completedRange[0].format('YYYY-MM-DD'));
+        params.append('completedEnd', currentParams.completedRange[1].format('YYYY-MM-DD'));
       }
-      
+
+      console.log('📡 loadTableData 请求参数:', {
+        type: activeTab,
+        page,
+        workspaceId: currentParams.workspaceId,
+        status: currentParams.status,
+        iterationId: currentParams.iterationId,
+        owner: currentParams.owner,
+      });
+
       const resp = await fetch(`/api/v1/tapd/data/query?${params.toString()}`);
       const result = await resp.json();
       if (result.success) {
         setTableData(result.data || []);
         setTablePagination(prev => ({ ...prev, current: page, total: result.total || 0 }));
+        console.log(`✅ 数据加载成功: ${result.data?.length || 0} 条记录, 总计 ${result.total || 0} 条`);
       }
     } catch (error) {
       console.error('加载数据明细失败:', error);
     } finally {
       setTableLoading(false);
     }
-  }, [activeTab, filterWorkspaceId, filterStatus, filterIterationId, filterOwner, filterCreatedRange, filterCompletedRange]);
+  }, [activeTab]);  // 🛠️ 修复：只依赖 activeTab，其他参数从 ref 读取
 
   // 🛠️ 修复Bug2: 完善的useEffect - 监听所有筛选条件变化并自动加载数据
   useEffect(() => {
+    // 🛠️ 修复Bug3: 如果正在切换项目，跳过自动加载（由triggerFilterChange处理）
+    if (isProjectSwitchingRef.current) {
+      console.log('⏭️ 跳过自动加载（项目切换中）');
+      return;
+    }
+
     // 使用ref中的最新值，避免闭包陷阱
     const params = filterParamsRef.current;
 
@@ -1334,6 +1364,10 @@ export default function TapdDataManagerPage() {
                       filterDebounceRef.current = null;
                     }
 
+                    // 🛠️ 修复Bug3: 标记项目切换开始（阻止useEffect自动加载）
+                    isProjectSwitchingRef.current = true;
+                    console.log('🔄 项目切换开始，标记 isProjectSwitching = true');
+
                     setFilterWorkspaceId(value);
                     setFilterIterationId(undefined); // 清空迭代选择
 
@@ -1351,6 +1385,12 @@ export default function TapdDataManagerPage() {
                       console.error('❌ 加载映射失败:', err);
                       // 即使失败也尝试加载数据
                       triggerFilterChange(100);
+                    }).finally(() => {
+                      // 🛠️ 修复Bug3: 项目切换完成，恢复useEffect自动加载
+                      setTimeout(() => {
+                        isProjectSwitchingRef.current = false;
+                        console.log('✅ 项目切换完成，标记 isProjectSwitching = false');
+                      }, 200);  // 稍微延迟，确保triggerFilterChange先执行
                     });
 
                     // #region debug-point project-select-onchange-end
