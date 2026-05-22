@@ -55,7 +55,8 @@ export async function GET(req: NextRequest) {
       case 'story': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
-        if (workspaceId) where.workspaceId = workspaceId;
+        // 🛠️ 支持多项目：workspaceId 也支持 IN 查询
+        addInCondition(where, 'workspaceId', workspaceId);
         // 🛠️ 支持多选：使用 IN 查询
         addInCondition(where, 'status', status);
         addInCondition(where, 'iterationId', iterationId);
@@ -134,7 +135,8 @@ export async function GET(req: NextRequest) {
       case 'task': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
-        if (workspaceId) where.workspaceId = workspaceId;
+        // 🛠️ 支持多项目：workspaceId 也支持 IN 查询
+        addInCondition(where, 'workspaceId', workspaceId);
         // 🛠️ 支持多选：使用 IN 查询
         addInCondition(where, 'status', status);
         addInCondition(where, 'owner', owner);
@@ -168,7 +170,8 @@ export async function GET(req: NextRequest) {
       case 'iteration': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
-        if (workspaceId) where.workspaceId = workspaceId;
+        // 🛠️ 支持多项目：workspaceId 也支持 IN 查询
+        addInCondition(where, 'workspaceId', workspaceId);
         // 🛠️ 支持多选：使用 IN 查询
         addInCondition(where, 'status', status);
 
@@ -187,7 +190,8 @@ export async function GET(req: NextRequest) {
       case 'bug': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
-        if (workspaceId) where.workspaceId = workspaceId;
+        // 🛠️ 支持多项目：workspaceId 也支持 IN 查询
+        addInCondition(where, 'workspaceId', workspaceId);
         // 🛠️ 支持多选：使用 IN 查询
         addInCondition(where, 'status', status);
         addInCondition(where, 'currentOwner', owner);
@@ -221,7 +225,8 @@ export async function GET(req: NextRequest) {
       case 'timesheet': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
-        if (workspaceId) where.workspaceId = workspaceId;
+        // 🛠️ 支持多项目：workspaceId 也支持 IN 查询
+        addInCondition(where, 'workspaceId', workspaceId);
         // 🛠️ 支持多选：使用 IN 查询
         addInCondition(where, 'owner', owner);
 

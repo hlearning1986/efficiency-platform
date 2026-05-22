@@ -372,7 +372,7 @@ export default function TapdDataManagerPage() {
   const [updatePolicy, setUpdatePolicy] = useState<'upsert' | 'incremental'>('upsert');
   
   // 数据明细筛选条件
-  const [filterWorkspaceId, setFilterWorkspaceId] = useState<string | undefined>();
+  const [filterWorkspaceId, setFilterWorkspaceId] = useState<string[]>([]);  // 🛠️ 改为数组，支持多选
   const [filterStatus, setFilterStatus] = useState<string[]>([]);  // 🛠️ 改为数组，支持多选
   const [filterIterationId, setFilterIterationId] = useState<string[]>([]);  // 🛠️ 改为数组
   const [filterOwner, setFilterOwner] = useState<string[]>([]);  // 🛠️ 改为数组
@@ -929,7 +929,12 @@ export default function TapdDataManagerPage() {
       // 🎯 关键修复：优先使用传入的参数，否则从 ref 读取最新值
       const currentParams = overrideParams || filterParamsRef.current;
 
-      if (currentParams.workspaceId) params.append('workspaceId', currentParams.workspaceId);
+      // 🛠️ 支持多选：workspaceId 也可能是数组
+      if (Array.isArray(currentParams.workspaceId) && currentParams.workspaceId.length > 0) {
+        params.append('workspaceId', currentParams.workspaceId.join(','));
+      } else if (currentParams.workspaceId && !Array.isArray(currentParams.workspaceId)) {
+        params.append('workspaceId', currentParams.workspaceId);
+      }
 
       // 🛠️ 支持多选：数组参数用逗号连接（后端会解析为 IN 查询）
       if (Array.isArray(currentParams.status) && currentParams.status.length > 0) {
@@ -1062,14 +1067,14 @@ export default function TapdDataManagerPage() {
       clearTimeout(filterDebounceRef.current);
     }
 
-    setFilterWorkspaceId(undefined);
+    setFilterWorkspaceId([]);  // 🛠️ 改为空数组
     setFilterStatus([]);  // 🛠️ 改为空数组
     setFilterIterationId([]);  // 🛠️ 改为空数组
     setFilterOwner([]);  // 🛠️ 改为空数组
     setFilterCreatedRange(null);
     setFilterCompletedRange(null);
 
-    // 🛠️ 修复：不需要手动调用loadDataStats，useEffect会自动触发
+    // 🛠️ 不需要手动调用loadDataStats，useEffect会自动触发
     console.log('🔄 筛选条件已重置');
   };
   
@@ -1190,10 +1195,15 @@ export default function TapdDataManagerPage() {
   }, [activeTab, customFieldMapping]);
   
   // 根据选中的项目过滤迭代列表
+  // 🛠️ 支持多项目：根据选中的项目列表过滤迭代
   const filteredIterations = useMemo(() => {
     if (!dataStats?.filters?.iterations) return [];
-    if (!filterWorkspaceId) return dataStats.filters.iterations;
-    return dataStats.filters.iterations.filter((i) => i.workspaceId === filterWorkspaceId);
+    // 如果没有选择项目，返回所有迭代
+    if (!filterWorkspaceId || filterWorkspaceId.length === 0) return dataStats.filters.iterations;
+    // 🎯 支持多项目：迭代属于任一选中项目即可
+    return dataStats.filters.iterations.filter((i) =>
+      filterWorkspaceId.includes(i.workspaceId)
+    );
   }, [dataStats?.filters?.iterations, filterWorkspaceId]);
   
   // 同步历史状态渲染
@@ -1388,61 +1398,27 @@ export default function TapdDataManagerPage() {
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500">所属项目</label>
                 <Select
+                  mode="multiple"  // 🛠️ 支持多选
                   placeholder="全部项目"
                   allowClear
                   value={filterWorkspaceId}
                   onChange={(value) => {
-                    // #region debug-point project-select-onchange
-                    console.group('[DEBUG] 🎯 项目选择 onChange 事件');
-                    console.log('📥 选择的项目 value:', value);
-                    console.log('📥 value 类型:', typeof value);
-                    console.log('📥 当前 filterWorkspaceId:', filterWorkspaceId);
-                    // #endregion
+                    console.log('📝 项目筛选变更:', value);
+                    handleMultiSelectChange(
+                      value as string[],
+                      dataStats?.filters?.projects || [],
+                      setFilterWorkspaceId,
+                      100  // 较短延迟，因为会触发异步加载
+                    );
 
-                    // 🛠️ 修复Bug3: 清除之前的防抖定时器，避免竞态
-                    if (filterDebounceRef.current) {
-                      clearTimeout(filterDebounceRef.current);
-                      filterDebounceRef.current = null;
-                    }
-
-                    // 🛠️ 修复Bug3: 标记项目切换开始（阻止useEffect自动加载）
-                    isProjectSwitchingRef.current = true;
-                    console.log('🔄 项目切换开始，标记 isProjectSwitching = true');
-
-                    setFilterWorkspaceId(value);
-                    setFilterIterationId(undefined); // 清空迭代选择
-
-                    // 先加载字段配置和工作流状态映射，完成后再刷新数据
-                    console.log('🚀 准备调用 loadCustomFieldMapping(', value, ')...');
-
-                    Promise.all([
-                      loadCustomFieldMapping(value),
-                      loadWorkflowStatusMap(value),  // 🎯 加载工作流状态映射
-                    ]).then(() => {
-                      console.log('✅ 字段映射和工作流状态映射加载完成');
-                      // 🛠️ 修复：使用新的防抖触发函数
-                      triggerFilterChange(100);  // 较短延迟，因为已经等待了异步操作
-                    }).catch((err) => {
-                      console.error('❌ 加载映射失败:', err);
-                      // 即使失败也尝试加载数据
-                      triggerFilterChange(100);
-                    }).finally(() => {
-                      // 🛠️ 修复Bug3: 项目切换完成，恢复useEffect自动加载
-                      setTimeout(() => {
-                        isProjectSwitchingRef.current = false;
-                        console.log('✅ 项目切换完成，标记 isProjectSwitching = false');
-                      }, 200);  // 稍微延迟，确保triggerFilterChange先执行
-                    });
-
-                    // #region debug-point project-select-onchange-end
-                    console.log('🏁 onChange 事件处理完毕');
-                    console.groupEnd();
-                    // #endregion
+                    // 🛠️ 清空迭代选择（项目变化后迭代可能不适用）
+                    setFilterIterationId([]);
                   }}
-                  options={dataStats?.filters?.projects || []}
+                  options={addSelectAllOption(dataStats?.filters?.projects || [])}
                   style={{ width: '100%' }}
                   showSearch
                   optionFilterProp="label"
+                  maxTagCount="responsive"
                 />
               </div>
             </Col>
