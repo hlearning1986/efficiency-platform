@@ -4,6 +4,30 @@ import { prisma } from '@/lib/prisma';
 /**
  * GET /api/v1/tapd/data/query - 查询落库的 TAPD 数据
  */
+
+// 🛠️ 辅助函数：解析逗号分隔的多选值为数组
+function parseMultiValue(value: string | null): string[] | null {
+  if (!value) return null;
+  const values = value.split(',').map(v => v.trim()).filter(v => v);
+  return values.length > 0 ? values : null;
+}
+
+// 🛠️ 辅助函数：构建 IN 查询条件
+function addInCondition(
+  where: Record<string, unknown>,
+  field: string,
+  value: string | null
+) {
+  if (!value) return;
+  const values = parseMultiValue(value);
+  if (values && values.length === 1) {
+    // 单个值，使用等于
+    (where as any)[field] = values[0];
+  } else if (values && values.length > 1) {
+    // 多个值，使用 IN 查询
+    (where as any)[field] = { in: values };
+  }
+}
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -30,12 +54,12 @@ export async function GET(req: NextRequest) {
     switch (type) {
       case 'story': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
         if (workspaceId) where.workspaceId = workspaceId;
-        if (status) where.status = status;
-        if (iterationId) where.iterationId = iterationId;
-        if (owner) where.owner = owner;
+        // 🛠️ 支持多选：使用 IN 查询
+        addInCondition(where, 'status', status);
+        addInCondition(where, 'iterationId', iterationId);
+        addInCondition(where, 'owner', owner);
         if (search) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (where as any).OR = [
@@ -109,11 +133,11 @@ export async function GET(req: NextRequest) {
 
       case 'task': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
         if (workspaceId) where.workspaceId = workspaceId;
-        if (status) where.status = status;
-        if (owner) where.owner = owner;
+        // 🛠️ 支持多选：使用 IN 查询
+        addInCondition(where, 'status', status);
+        addInCondition(where, 'owner', owner);
         if (search) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (where as any).OR = [
@@ -145,7 +169,8 @@ export async function GET(req: NextRequest) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
         if (workspaceId) where.workspaceId = workspaceId;
-        if (status) where.status = status;
+        // 🛠️ 支持多选：使用 IN 查询
+        addInCondition(where, 'status', status);
 
         [data, total] = await Promise.all([
           prisma.tapdIteration.findMany({
@@ -163,8 +188,9 @@ export async function GET(req: NextRequest) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
         if (workspaceId) where.workspaceId = workspaceId;
-        if (status) where.status = status;
-        if (owner) where.currentOwner = owner;
+        // 🛠️ 支持多选：使用 IN 查询
+        addInCondition(where, 'status', status);
+        addInCondition(where, 'currentOwner', owner);
         if (search) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (where as any).OR = [
@@ -196,7 +222,8 @@ export async function GET(req: NextRequest) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const where: Record<string, unknown> = {};
         if (workspaceId) where.workspaceId = workspaceId;
-        if (owner) where.owner = owner;
+        // 🛠️ 支持多选：使用 IN 查询
+        addInCondition(where, 'owner', owner);
 
         [data, total] = await Promise.all([
           prisma.tapdTimesheet.findMany({

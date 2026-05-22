@@ -373,13 +373,13 @@ export default function TapdDataManagerPage() {
   
   // 数据明细筛选条件
   const [filterWorkspaceId, setFilterWorkspaceId] = useState<string | undefined>();
-  const [filterStatus, setFilterStatus] = useState<string | undefined>();
-  const [filterIterationId, setFilterIterationId] = useState<string | undefined>();
-  const [filterOwner, setFilterOwner] = useState<string | undefined>();
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);  // 🛠️ 改为数组，支持多选
+  const [filterIterationId, setFilterIterationId] = useState<string[]>([]);  // 🛠️ 改为数组
+  const [filterOwner, setFilterOwner] = useState<string[]>([]);  // 🛠️ 改为数组
   const [filterCreatedRange, setFilterCreatedRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [filterCompletedRange, setFilterCompletedRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
 
-  // 🛠️ 修复Bug1: 使用ref存储最新的筛选参数，避免闭包陷阱
+  // 🛠️ 使用ref存储最新的筛选参数，避免闭包陷阱
   const filterParamsRef = useRef({
     workspaceId: filterWorkspaceId,
     status: filterStatus,
@@ -910,12 +910,12 @@ export default function TapdDataManagerPage() {
   });
   
   // 加载数据明细
-  // 🛠️ 修复：从 ref 读取最新筛选参数，避免 stale closure 问题
+  // 🛠️ 支持多选：从 ref 读取最新筛选参数，避免 stale closure 问题
   const loadTableData = useCallback(async (page = 1, pageSize = 20, overrideParams?: {
     workspaceId?: string;
-    status?: string;
-    iterationId?: string;
-    owner?: string;
+    status?: string[];  // 🛠️ 改为数组，支持多选
+    iterationId?: string[];  // 🛠️ 改为数组
+    owner?: string[];  // 🛠️ 改为数组
     createdRange?: [dayjs.Dayjs, dayjs.Dayjs] | null;
     completedRange?: [dayjs.Dayjs, dayjs.Dayjs] | null;
   }) => {
@@ -930,9 +930,18 @@ export default function TapdDataManagerPage() {
       const currentParams = overrideParams || filterParamsRef.current;
 
       if (currentParams.workspaceId) params.append('workspaceId', currentParams.workspaceId);
-      if (currentParams.status) params.append('status', currentParams.status);
-      if (currentParams.iterationId) params.append('iterationId', currentParams.iterationId);
-      if (currentParams.owner) params.append('owner', currentParams.owner);
+
+      // 🛠️ 支持多选：数组参数用逗号连接（后端会解析为 IN 查询）
+      if (Array.isArray(currentParams.status) && currentParams.status.length > 0) {
+        params.append('status', currentParams.status.join(','));
+      }
+      if (Array.isArray(currentParams.iterationId) && currentParams.iterationId.length > 0) {
+        params.append('iterationId', currentParams.iterationId.join(','));
+      }
+      if (Array.isArray(currentParams.owner) && currentParams.owner.length > 0) {
+        params.append('owner', currentParams.owner.join(','));
+      }
+
       if (currentParams.createdRange) {
         params.append('createdStart', currentParams.createdRange[0].format('YYYY-MM-DD'));
         params.append('createdEnd', currentParams.createdRange[1].format('YYYY-MM-DD'));
@@ -963,7 +972,7 @@ export default function TapdDataManagerPage() {
     } finally {
       setTableLoading(false);
     }
-  }, [activeTab]);  // 🛠️ 修复：只依赖 activeTab，其他参数从 ref 读取
+  }, [activeTab]);  // 🛠️ 只依赖 activeTab，其他参数从 ref 读取
 
   // 🛠️ 修复Bug2: 完善的useEffect - 监听所有筛选条件变化并自动加载数据
   useEffect(() => {
@@ -1013,8 +1022,40 @@ export default function TapdDataManagerPage() {
       });
     }, debounceMs);
   }, [loadTableData, loadDataStats, tablePagination.pageSize]);
-  
-  // 重置筛选条件
+
+  // 🛠️ 辅助函数：处理多选组件的全选逻辑
+  const handleMultiSelectChange = (
+    selectedValues: string[],
+    allOptions: { value: string; label?: string }[],
+    setter: (values: string[]) => void,
+    debounceMs = 200
+  ) => {
+    // 检查是否选择了"全选"选项
+    const hasSelectAll = selectedValues.includes('__ALL__');
+
+    if (hasSelectAll) {
+      // 选择全选：选中所有选项（除了全选本身）
+      const allValues = allOptions.map(opt => opt.value).filter(v => v !== '__ALL__');
+      setter(allValues);
+      console.log('📝 全选触发，选中所有:', allValues.length, '项');
+    } else {
+      // 正常选择
+      setter(selectedValues);
+      console.log('📝 多选变更，选中:', selectedValues.length, '项');
+    }
+
+    // 触发筛选
+    triggerFilterChange(debounceMs);
+  };
+
+  // 🛠️ 为选项列表添加全选选项
+  const addSelectAllOption = (options: { value: string; label?: string }[]) => {
+    if (!options || options.length === 0) return [];
+    return [
+      { value: '__ALL__', label: '✅ 全选' },
+      ...options
+    ];
+  };
   const handleResetFilters = () => {
     // 清除防抖定时器
     if (filterDebounceRef.current) {
@@ -1022,9 +1063,9 @@ export default function TapdDataManagerPage() {
     }
 
     setFilterWorkspaceId(undefined);
-    setFilterStatus(undefined);
-    setFilterIterationId(undefined);
-    setFilterOwner(undefined);
+    setFilterStatus([]);  // 🛠️ 改为空数组
+    setFilterIterationId([]);  // 🛠️ 改为空数组
+    setFilterOwner([]);  // 🛠️ 改为空数组
     setFilterCreatedRange(null);
     setFilterCompletedRange(null);
 
@@ -1410,17 +1451,21 @@ export default function TapdDataManagerPage() {
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500">状态</label>
                 <Select
+                  mode="multiple"  // 🛠️ 支持多选
                   placeholder="全部状态"
                   allowClear
                   value={filterStatus}
                   onChange={(value) => {
-                    console.log('📝 状态筛选变更:', value);
-                    setFilterStatus(value);
-                    // 🛠️ 修复：使用防抖触发，避免竞态条件
-                    triggerFilterChange(200);
+                    handleMultiSelectChange(
+                      value as string[],
+                      dataStats?.filters?.statuses || [],
+                      setFilterStatus,
+                      200
+                    );
                   }}
-                  options={dataStats?.filters?.statuses || []}
+                  options={addSelectAllOption(dataStats?.filters?.statuses || [])}
                   style={{ width: '100%' }}
+                  maxTagCount="responsive"  // 超出时显示 +N
                 />
               </div>
             </Col>
@@ -1429,20 +1474,24 @@ export default function TapdDataManagerPage() {
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500">迭代</label>
                 <Select
+                  mode="multiple"  // 🛠️ 支持多选
                   placeholder="全部迭代"
                   allowClear
                   value={filterIterationId}
                   onChange={(value) => {
-                    console.log('📝 迭代筛选变更:', value);
-                    setFilterIterationId(value);
-                    // 🛠️ 修复：使用防抖触发
-                    triggerFilterChange(200);
+                    handleMultiSelectChange(
+                      value as string[],
+                      filteredIterations,
+                      setFilterIterationId,
+                      200
+                    );
                   }}
-                  options={filteredIterations}
+                  options={addSelectAllOption(filteredIterations)}
                   style={{ width: '100%' }}
                   showSearch
                   optionFilterProp="label"
                   notFoundContent="请先选择项目"
+                  maxTagCount="responsive"
                 />
               </div>
             </Col>
@@ -1451,19 +1500,23 @@ export default function TapdDataManagerPage() {
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500">处理人</label>
                 <Select
+                  mode="multiple"  // 🛠️ 支持多选
                   placeholder="全部处理人"
                   allowClear
                   value={filterOwner}
                   onChange={(value) => {
-                    console.log('📝 处理人筛选变更:', value);
-                    setFilterOwner(value);
-                    // 🛠️ 修复：使用防抖触发
-                    triggerFilterChange(200);
+                    handleMultiSelectChange(
+                      value as string[],
+                      dataStats?.filters?.owners || [],
+                      setFilterOwner,
+                      200
+                    );
                   }}
-                  options={dataStats?.filters?.owners || []}
+                  options={addSelectAllOption(dataStats?.filters?.owners || [])}
                   style={{ width: '100%' }}
                   showSearch
                   optionFilterProp="label"
+                  maxTagCount="responsive"
                 />
               </div>
             </Col>
