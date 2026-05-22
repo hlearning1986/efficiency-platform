@@ -378,6 +378,31 @@ export default function TapdDataManagerPage() {
   const [filterOwner, setFilterOwner] = useState<string | undefined>();
   const [filterCreatedRange, setFilterCreatedRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [filterCompletedRange, setFilterCompletedRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
+
+  // 🛠️ 修复Bug1: 使用ref存储最新的筛选参数，避免闭包陷阱
+  const filterParamsRef = useRef({
+    workspaceId: filterWorkspaceId,
+    status: filterStatus,
+    iterationId: filterIterationId,
+    owner: filterOwner,
+    createdRange: filterCreatedRange,
+    completedRange: filterCompletedRange,
+  });
+
+  // 🛠️ 修复Bug1: 防抖定时器ref
+  const filterDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 🛠️ 同步ref与state（在每次渲染时更新）
+  useEffect(() => {
+    filterParamsRef.current = {
+      workspaceId: filterWorkspaceId,
+      status: filterStatus,
+      iterationId: filterIterationId,
+      owner: filterOwner,
+      createdRange: filterCreatedRange,
+      completedRange: filterCompletedRange,
+    };
+  }, [filterWorkspaceId, filterStatus, filterIterationId, filterOwner, filterCreatedRange, filterCompletedRange]);
   
   // 数据
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -915,31 +940,66 @@ export default function TapdDataManagerPage() {
       setTableLoading(false);
     }
   }, [activeTab, filterWorkspaceId, filterStatus, filterIterationId, filterOwner, filterCreatedRange, filterCompletedRange]);
-  
+
+  // 🛠️ 修复Bug2: 完善的useEffect - 监听所有筛选条件变化并自动加载数据
   useEffect(() => {
+    // 使用ref中的最新值，避免闭包陷阱
+    const params = filterParamsRef.current;
+
+    console.log('🔄 筛选条件变化，自动触发数据加载:', {
+      workspaceId: params.workspaceId,
+      status: params.status,
+      iterationId: params.iterationId,
+      owner: params.owner,
+    });
+
     loadTableData();
+    loadDataStats({
+      workspaceId: params.workspaceId,
+      status: params.status,
+      iterationId: params.iterationId,
+      owner: params.owner,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
-  
-  // 筛选条件变化时重新加载数据
-  const handleFilterChange = () => {
-    loadTableData(1, tablePagination.pageSize);
-    loadDataStats(getCurrentFilters());
-  };
+  }, [activeTab, filterWorkspaceId, filterStatus, filterIterationId, filterOwner, filterCreatedRange, filterCompletedRange]);
+
+  // 🛠️ 修复Bug1+2: 防抖的筛选触发函数（用于手动调用场景）
+  const triggerFilterChange = useCallback((debounceMs = 300) => {
+    // 清除之前的定时器
+    if (filterDebounceRef.current) {
+      clearTimeout(filterDebounceRef.current);
+    }
+
+    // 设置新的防抖定时器
+    filterDebounceRef.current = setTimeout(() => {
+      console.log('⏰ 防抖触发 - 执行筛选');
+      const params = filterParamsRef.current;
+      loadTableData(1, tablePagination.pageSize);
+      loadDataStats({
+        workspaceId: params.workspaceId,
+        status: params.status,
+        iterationId: params.iterationId,
+        owner: params.owner,
+      });
+    }, debounceMs);
+  }, [loadTableData, loadDataStats, tablePagination.pageSize]);
   
   // 重置筛选条件
   const handleResetFilters = () => {
+    // 清除防抖定时器
+    if (filterDebounceRef.current) {
+      clearTimeout(filterDebounceRef.current);
+    }
+
     setFilterWorkspaceId(undefined);
     setFilterStatus(undefined);
     setFilterIterationId(undefined);
     setFilterOwner(undefined);
     setFilterCreatedRange(null);
     setFilterCompletedRange(null);
-    
-    setTimeout(() => {
-      loadTableData(1, tablePagination.pageSize);
-      loadDataStats({});
-    }, 100);
+
+    // 🛠️ 修复：不需要手动调用loadDataStats，useEffect会自动触发
+    console.log('🔄 筛选条件已重置');
   };
   
   // 根据 activeTab 获取对应列（动态字段映射）
@@ -1267,23 +1327,32 @@ export default function TapdDataManagerPage() {
                     console.log('📥 value 类型:', typeof value);
                     console.log('📥 当前 filterWorkspaceId:', filterWorkspaceId);
                     // #endregion
-                    
+
+                    // 🛠️ 修复Bug3: 清除之前的防抖定时器，避免竞态
+                    if (filterDebounceRef.current) {
+                      clearTimeout(filterDebounceRef.current);
+                      filterDebounceRef.current = null;
+                    }
+
                     setFilterWorkspaceId(value);
                     setFilterIterationId(undefined); // 清空迭代选择
-                    
+
                     // 先加载字段配置和工作流状态映射，完成后再刷新数据
                     console.log('🚀 准备调用 loadCustomFieldMapping(', value, ')...');
-                    
+
                     Promise.all([
                       loadCustomFieldMapping(value),
                       loadWorkflowStatusMap(value),  // 🎯 加载工作流状态映射
                     ]).then(() => {
-                      console.log('✅ 字段映射和工作流状态映射加载完成，准备调用 handleFilterChange()');
-                      handleFilterChange();
+                      console.log('✅ 字段映射和工作流状态映射加载完成');
+                      // 🛠️ 修复：使用新的防抖触发函数
+                      triggerFilterChange(100);  // 较短延迟，因为已经等待了异步操作
                     }).catch((err) => {
                       console.error('❌ 加载映射失败:', err);
+                      // 即使失败也尝试加载数据
+                      triggerFilterChange(100);
                     });
-                    
+
                     // #region debug-point project-select-onchange-end
                     console.log('🏁 onChange 事件处理完毕');
                     console.groupEnd();
@@ -1305,8 +1374,10 @@ export default function TapdDataManagerPage() {
                   allowClear
                   value={filterStatus}
                   onChange={(value) => {
+                    console.log('📝 状态筛选变更:', value);
                     setFilterStatus(value);
-                    handleFilterChange();
+                    // 🛠️ 修复：使用防抖触发，避免竞态条件
+                    triggerFilterChange(200);
                   }}
                   options={dataStats?.filters?.statuses || []}
                   style={{ width: '100%' }}
@@ -1322,8 +1393,10 @@ export default function TapdDataManagerPage() {
                   allowClear
                   value={filterIterationId}
                   onChange={(value) => {
+                    console.log('📝 迭代筛选变更:', value);
                     setFilterIterationId(value);
-                    handleFilterChange();
+                    // 🛠️ 修复：使用防抖触发
+                    triggerFilterChange(200);
                   }}
                   options={filteredIterations}
                   style={{ width: '100%' }}
@@ -1342,8 +1415,10 @@ export default function TapdDataManagerPage() {
                   allowClear
                   value={filterOwner}
                   onChange={(value) => {
+                    console.log('📝 处理人筛选变更:', value);
                     setFilterOwner(value);
-                    handleFilterChange();
+                    // 🛠️ 修复：使用防抖触发
+                    triggerFilterChange(200);
                   }}
                   options={dataStats?.filters?.owners || []}
                   style={{ width: '100%' }}
@@ -1359,8 +1434,10 @@ export default function TapdDataManagerPage() {
                 <RangePicker
                   value={filterCreatedRange}
                   onChange={(dates) => {
+                    console.log('📝 创建时间筛选变更:', dates);
                     setFilterCreatedRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-                    handleFilterChange();
+                    // 🛠️ 修复：使用防抖触发
+                    triggerFilterChange(300);
                   }}
                   format="YYYY-MM-DD"
                   style={{ width: '100%' }}
@@ -1375,8 +1452,10 @@ export default function TapdDataManagerPage() {
                 <RangePicker
                   value={filterCompletedRange}
                   onChange={(dates) => {
+                    console.log('📝 完成时间筛选变更:', dates);
                     setFilterCompletedRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-                    handleFilterChange();
+                    // 🛠️ 修复：使用防抖触发
+                    triggerFilterChange(300);
                   }}
                   format="YYYY-MM-DD"
                   style={{ width: '100%' }}
