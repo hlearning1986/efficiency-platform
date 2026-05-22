@@ -721,7 +721,32 @@ export default function TapdDataManagerPage() {
     console.groupEnd();
     // #endregion
   };
-  
+
+  // 🛠️ 关键修复：监听项目选择变化，自动加载自定义字段映射
+  // 解决：loadCustomFieldMapping 从未被调用导致 mappingLoaded 永远为 false
+  useEffect(() => {
+    const loadMappingForSelectedProjects = async () => {
+      // 如果选择了项目，加载第一个项目的字段映射
+      if (Array.isArray(filterWorkspaceId) && filterWorkspaceId.length > 0) {
+        const firstProjectId = filterWorkspaceId[0];
+        console.log('🔄 项目选择变化，开始加载自定义字段映射, workspaceId:', firstProjectId);
+
+        // 🛠️ 重置 mappingLoaded 状态（正在加载中）
+        setMappingLoaded(false);
+
+        // 加载字段映射
+        await loadCustomFieldMapping(firstProjectId);
+      } else {
+        // 未选择项目时，标记为已加载（不需要显示 loading）
+        console.log('⚠️ 未选择项目，跳过字段映射加载');
+        setMappingLoaded(true);
+        setCustomFieldMapping({});
+      }
+    };
+
+    loadMappingForSelectedProjects();
+  }, [filterWorkspaceId]);  // 🎯 监听项目变化
+
   // 🎯 加载工作流状态映射（动态获取真实状态名称）
   const loadWorkflowStatusMap = async (workspaceId: string | undefined) => {
     if (!workspaceId) {
