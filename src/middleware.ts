@@ -16,8 +16,11 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/v1/dashboard/delivery') ||
     pathname.startsWith('/api/v1/sync') ||
     pathname.startsWith('/api/v1/tapd') ||
-    pathname.startsWith('/_next/static') ||
-    pathname.startsWith('/_next/image') ||
+    pathname.startsWith('/api/v1/reports') ||
+    pathname.startsWith('/api/v1/agile') ||
+    pathname.startsWith('/api/v1/workload') ||
+    pathname.startsWith('_next/static') ||
+    pathname.startsWith('_next/image') ||
     pathname === '/favicon.ico' ||
     pathname.endsWith('.html')
   ) {
@@ -46,6 +49,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!login|api/v1/health|api/auth|api/v1/resources/tapd|api/v1/settings/system|api/v1/settings/team-config|api/v1/settings/project-mapping|api/v1/dashboard/delivery|_next/static|_next/image|favicon.ico).*)',
+    '/((?!login|api/v1/health|api/auth|api/v1/resources/tapd|api/v1/settings/system|api/v1/settings/team-config|api/v1/settings/project-mapping|api/v1/dashboard/delivery|api/v1/workload|_next/static|_next/image|favicon.ico).*)',
   ],
 };

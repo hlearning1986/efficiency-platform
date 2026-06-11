@@ -4,7 +4,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
-import { batchConvertStatuses } from '@/lib/workflow-status-service';
+import { batchConvertStatuses, syncWorkspaceWorkflow } from '@/lib/workflow-status-service';
 
 // ============================================================
 // 类型定义
@@ -153,6 +153,9 @@ async function fetchStories(
     allItems.push(...items.map(flattenTapdItem));
     page++;
     if (items.length < limit) break;
+
+    // 🛡️ 添加请求间隔，避免触发限流
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   return allItems;
@@ -187,6 +190,9 @@ async function fetchTasks(
     allItems.push(...items.map(flattenTapdItem));
     page++;
     if (items.length < limit) break;
+
+    // 🛡️ 添加请求间隔，避免触发限流
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   return allItems;
@@ -213,6 +219,9 @@ async function fetchIterations(
     allItems.push(...items.map(flattenTapdItem));
     page++;
     if (items.length < 200) break;
+
+    // 🛡️ 添加请求间隔，避免触发限流
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   return allItems;
@@ -246,9 +255,27 @@ async function fetchWorkspaceName(
 // ============================================================
 
 function parseDate(val: unknown): Date | null {
-  if (!val) return null;
-  const d = new Date(String(val));
-  return isNaN(d.getTime()) ? null : d;
+  if (val === null || val === undefined || val === '') return null;
+
+  const str = String(val).trim();
+
+  // 处理常见的无效值
+  if (str === '0000-00-00' ||
+      str === '0000-00-00 00:00:00' ||
+      str === '1970-01-01 00:00:00' && !str.includes('1970')) {
+    return null;
+  }
+
+  const d = new Date(str);
+
+  // 双重验证：确保是有效日期且在合理范围内（1900-2100年）
+  if (isNaN(d.getTime()) ||
+      d.getFullYear() < 1900 ||
+      d.getFullYear() > 2100) {
+    return null;
+  }
+
+  return d;
 }
 
 function parseFloat2(val: unknown): number | null {
@@ -263,16 +290,65 @@ function parseFloat2(val: unknown): number | null {
  */
 async function convertStoryStatus(
   workspaceId: string,
-  rawStatus: string
+  rawStatus: string,
+  workflowMappings?: Map<string, Map<string, string>>
 ): Promise<string> {
   if (!rawStatus) return rawStatus;
 
   try {
-    // 尝试从工作流配置表获取映射
+    // 1. 优先从预加载的工作流配置获取映射
+    if (workflowMappings?.has(workspaceId)) {
+      const projectMapping = workflowMappings.get(workspaceId);
+      const mappedValue = projectMapping?.get(rawStatus);
+      
+      if (mappedValue && mappedValue !== rawStatus) {
+        console.log(`🔄 [${workspaceId}] 状态转换: "${rawStatus}" → "${mappedValue}"`);
+        return mappedValue;
+      }
+    }
+
+    // 2. 如果预加载的映射中没有，尝试直接查询数据库
     const mapping = await batchConvertStatuses(workspaceId, [rawStatus], 'story');
-    return mapping.get(rawStatus) || rawStatus;
+    const converted = mapping.get(rawStatus);
+    
+    if (converted && converted !== rawStatus) {
+      console.log(`🔄 [${workspaceId}] 数据库查询状态转换: "${rawStatus}" → "${converted}"`);
+      return converted;
+    }
+
+    // 3. 使用通用状态映射作为最终回退
+    const genericMapping: Record<string, string> = {
+      'new': '新建',
+      'status_1': '新建',
+      'planning': '规划中',
+      'status_2': '规划中',
+      'planned': '计划中',
+      'developing': '开发中',
+      'status_3': '开发中',
+      'testing': '测试中',
+      'status_4': '测试中',
+      'resolved': '已发布',
+      'released': '已发布',
+      'status_5': '待发布',
+      'status_6': '待发布',
+      'status_7': '已完成',
+      'status_8': '已完成',
+      'rejected': '已拒绝',
+      'closed': '已关闭',
+      'done': '已完成',
+    };
+
+    const fallbackConverted = genericMapping[rawStatus];
+    if (fallbackConverted) {
+      console.log(`⚠️ [${workspaceId}] 使用通用映射: "${rawStatus}" → "${fallbackConverted}"`);
+      return fallbackConverted;
+    }
+
+    // 4. 都没有找到，记录警告并返回原始值
+    console.warn(`⚠️ [${workspaceId}] 无法转换状态: "${rawStatus}", 使用原始值`);
+    return rawStatus;
   } catch (error) {
-    console.warn(`⚠️ 状态转换失败 [${workspaceId}]: ${rawStatus}, 使用原始值`);
+    console.warn(`⚠️ 状态转换失败 [${workspaceId}]: ${rawStatus}, 使用原始值`, error);
     return rawStatus;
   }
 }
@@ -317,9 +393,9 @@ async function saveStories(
         const wsId = String(s['workspace_id'] ?? '');
         const iterId = String(s['iteration_id'] ?? '');
         
-        // 状态转换：使用工作流配置映射
+        // 状态转换：使用工作流配置映射（增强版：支持多级回退）
         const rawStatus = String(s['status'] ?? '');
-        const convertedStatus = workflowMappings?.get(wsId)?.get(rawStatus) || rawStatus;
+        const convertedStatus = await convertStoryStatus(wsId, rawStatus, workflowMappings);
         
         return prisma.tapdStory.upsert({
           where: { id: String(s['id']) },
@@ -404,16 +480,51 @@ async function saveStories(
 
 /**
  * 批量保存 Tasks 到数据库（upsert）
+ * 🛡️ 增强版：单条错误不影响整体
  */
-async function saveTasks(tasks: Record<string, unknown>[]) {
-  const batchSize = 500;
-  for (let i = 0; i < tasks.length; i += batchSize) {
-    const batch = tasks.slice(i, i + batchSize);
-    await prisma.$transaction(
-      batch.map((t) => {
+async function saveTasks(tasks: Record<string, unknown>[], workspaceNameMap: Map<string, string>) {
+  console.log('🚀 [NEW CODE] saveTasks函数已加载 - 新版本代码正在运行');
+  console.log(`📦 [NEW CODE] 待处理任务数: ${tasks.length}`);
+
+  // 🛡️ 第一层防护：在源头清理所有无效日期值（双重保险）
+  const INVALID_DATE_VALUES = ['0000-00-00', '0000-00-00 00:00:00', '', null, undefined];
+  const DATE_FIELDS = ['completed', 'created', 'modified', 'begin', 'due'];
+
+  let cleanedCount = 0;
+  const cleanedTasks = tasks.map(task => {
+    const cleaned = { ...task };
+    DATE_FIELDS.forEach(field => {
+      const val = task[field];
+      if (val === null || val === undefined || val === '' ||
+          String(val).trim() === '0000-00-00' ||
+          String(val).trim() === '0000-00-00 00:00:00') {
+        delete cleaned[field];  // 删除无效字段，让Prisma使用默认值null
+        cleanedCount++;
+      }
+    });
+    return cleaned;
+  });
+
+  if (cleanedCount > 0) {
+    console.log(`🧹 [NEW CODE] 已清理 ${cleanedCount} 个无效日期字段`);
+  }
+
+  const batchSize = 100;  // 减小批次大小，提高稳定性
+  let successCount = 0;
+  let errorCount = 0;
+  let lastError: string | null = null;
+
+  for (let i = 0; i < cleanedTasks.length; i += batchSize) {
+    const batch = cleanedTasks.slice(i, i + batchSize);
+
+    // 逐条处理，避免单条错误导致整个批次失败
+    for (const t of batch) {
+      try {
         const wsId = String(t['workspace_id'] ?? '');
-        return prisma.tapdTask.upsert({
-          where: { id: String(t['id']) },
+        const taskId = String(t['id']);
+
+        await prisma.tapdTask.upsert({
+          where: { id: taskId },
           update: {
             name: String(t['name'] ?? ''),
             description: t['description'] ? String(t['description']) : null,
@@ -428,11 +539,25 @@ async function saveTasks(tasks: Record<string, unknown>[]) {
             effortCompleted: parseFloat2(t['effort_completed']),
             storyId: t['story_id'] ? String(t['story_id']) : null,
             workspaceId: wsId,
+            workspaceName: workspaceNameMap.get(wsId) ?? null,
             iterationId: t['iteration_id'] ? String(t['iteration_id']) : null,
+            customFieldOne: t['custom_field_one'] ? String(t['custom_field_one']) : null,
+            customFieldTwo: t['custom_field_two'] ? String(t['custom_field_two']) : null,
+            customFieldThree: t['custom_field_three'] ? String(t['custom_field_three']) : null,
+            customFieldFour: t['custom_field_four'] ? String(t['custom_field_four']) : null,
+            customFieldFive: t['custom_field_five'] ? String(t['custom_field_five']) : null,
+            customFieldSix: t['custom_field_six'] ? String(t['custom_field_six']) : null,
+            customFieldSeven: t['custom_field_seven'] ? String(t['custom_field_seven']) : null,
+            customFieldEight: t['custom_field_eight'] ? String(t['custom_field_eight']) : null,
+            customField9: t['custom_field_9'] ? String(t['custom_field_9']) : null,
+            customField10: t['custom_field_10'] ? String(t['custom_field_10']) : null,
+            customField11: t['custom_field_11'] ? String(t['custom_field_11']) : null,
+            customField12: t['custom_field_12'] ? String(t['custom_field_12']) : null,
+            customField13: t['custom_field_13'] ? String(t['custom_field_13']) : null,
             syncedAt: new Date(),
           },
           create: {
-            id: String(t['id']),
+            id: taskId,
             name: String(t['name'] ?? ''),
             description: t['description'] ? String(t['description']) : null,
             status: String(t['status'] ?? ''),
@@ -446,12 +571,58 @@ async function saveTasks(tasks: Record<string, unknown>[]) {
             effortCompleted: parseFloat2(t['effort_completed']),
             storyId: t['story_id'] ? String(t['story_id']) : null,
             workspaceId: wsId,
+            workspaceName: workspaceNameMap.get(wsId) ?? null,
             iterationId: t['iteration_id'] ? String(t['iteration_id']) : null,
+            priority: t['priority'] ? String(t['priority']) : null,
+            owner: t['owner'] ? String(t['owner']) : null,
+            creator: t['creator'] ? String(t['creator']) : null,
+            created: parseDate(t['created']) ?? new Date(),
+            modified: parseDate(t['modified']),
+            completed: parseDate(t['completed']),
+            effort: parseFloat2(t['effort']),
+            effortCompleted: parseFloat2(t['effort_completed']),
+            storyId: t['story_id'] ? String(t['story_id']) : null,
+            workspaceId: wsId,
+            workspaceName: workspaceNameMap.get(wsId) ?? null,
+            iterationId: t['iteration_id'] ? String(t['iteration_id']) : null,
+            customFieldOne: t['custom_field_one'] ? String(t['custom_field_one']) : null,
+            customFieldTwo: t['custom_field_two'] ? String(t['custom_field_two']) : null,
+            customFieldThree: t['custom_field_three'] ? String(t['custom_field_three']) : null,
+            customFieldFour: t['custom_field_four'] ? String(t['custom_field_four']) : null,
+            customFieldFive: t['custom_field_five'] ? String(t['custom_field_five']) : null,
+            customFieldSix: t['custom_field_six'] ? String(t['custom_field_six']) : null,
+            customFieldSeven: t['custom_field_seven'] ? String(t['custom_field_seven']) : null,
+            customFieldEight: t['custom_field_eight'] ? String(t['custom_field_eight']) : null,
+            customField9: t['custom_field_9'] ? String(t['custom_field_9']) : null,
+            customField10: t['custom_field_10'] ? String(t['custom_field_10']) : null,
+            customField11: t['custom_field_11'] ? String(t['custom_field_11']) : null,
+            customField12: t['custom_field_12'] ? String(t['custom_field_12']) : null,
+            customField13: t['custom_field_13'] ? String(t['custom_field_13']) : null,
           },
         });
-      }),
-      { timeout: 60000 },
-    );
+
+        successCount++;
+      } catch (error) {
+        errorCount++;
+        lastError = error instanceof Error ? error.message : '未知错误';
+
+        // 只记录前5个错误详情，避免日志过多
+        if (errorCount <= 5) {
+          console.warn(`⚠️ 任务 ${t['id']} (${t['name']}) 保存失败:`, lastError);
+        }
+      }
+    }
+
+    // 每个批次之间添加小延迟，避免数据库压力过大
+    if (i + batchSize < tasks.length) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
+
+  // 输出统计信息
+  console.log(`📊 任务保存完成: 成功 ${successCount} 条, 失败 ${errorCount} 条`);
+  if (errorCount > 0 && lastError) {
+    console.warn(`⚠️ 最后一个错误: ${lastError}`);
   }
 }
 
@@ -525,13 +696,40 @@ export async function fullSync(options: SyncOptions): Promise<SyncResult> {
       await delay(300);
     }
 
-    // 2.5 预加载工作流状态映射（用于状态转换）
-    onProgress?.('正在加载工作流配置...', 8);
+    // 2.5 同步工作流状态配置（从 TAPD API 获取最新配置）
+    onProgress?.('正在同步工作流配置...', 8);
+    
+    console.log('🔄 开始同步工作流状态配置...');
+    for (const wsId of workspaceIds) {
+      try {
+        const wsName = workspaceNameMap.get(wsId) || wsId;
+        onProgress?.(`[${wsName}] 正在同步工作流配置...`, 8);
+        
+        const workflowResult = await syncWorkspaceWorkflow(wsId, {
+          forceRefresh: true, // 强制刷新，确保获取最新配置
+          systems: ['story', 'bug'],
+          workspaceName: wsName,
+        });
+        
+        if (workflowResult.success) {
+          console.log(`✅ [${wsName}] 工作流配置同步成功 (Story: ${workflowResult.storyCount || 0}, Bug: ${workflowResult.bugCount || 0})`);
+        } else {
+          console.warn(`⚠️ [${wsName}] 工作流配置同步失败: ${workflowResult.message}`);
+        }
+      } catch (error) {
+        console.error(`❌ [${wsId}] 工作流配置同步异常:`, error);
+      }
+      
+      await delay(200); // 避免请求过快
+    }
+
+    // 2.6 预加载工作流状态映射（用于状态转换）
+    onProgress?.('正在加载工作流映射...', 10);
     let workflowMappings: Map<string, Map<string, string>>;
     
     try {
       workflowMappings = await preloadWorkflowMappings(workspaceIds);
-      console.log(`✅ 已加载 ${workspaceMappings.size} 个项目的工作流配置`);
+      console.log(`✅ 已加载 ${workflowMappings.size} 个项目的工作流配置`);
     } catch (error) {
       console.warn('⚠️ 工作流配置加载失败，将使用原始状态值');
       workflowMappings = new Map();
@@ -568,7 +766,7 @@ export async function fullSync(options: SyncOptions): Promise<SyncResult> {
       // 3.3 拉取 Tasks
       onProgress?.(`[${wsName}] 正在拉取任务...`, basePercent + 25);
       const tasks = await fetchTasks(wsId, headers);
-      await saveTasks(tasks);
+      await saveTasks(tasks, workspaceNameMap);
       totalTasks += tasks.length;
 
       await delay(500);

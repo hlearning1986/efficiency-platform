@@ -130,19 +130,68 @@ async function fetchAllPages<T>(
   const allItems: T[] = [];
 
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const response = await client.get<TapdPaginatedResponse<T>>(path, {
-      params: {
-        ...params,
-        limit: PAGE_SIZE,
-        page,
-      },
-    });
+    try {
+      const response = await client.get<TapdPaginatedResponse<T>>(path, {
+        params: {
+          ...params,
+          limit: PAGE_SIZE,
+          page,
+        },
+      });
 
-    const { data, total } = response.data;
-    allItems.push(...data);
+      // 防御性检查：确保response.data存在且格式正确
+      if (!response.data) {
+        logger.warn(`[TAPD Client] Empty response for ${path} page ${page}`);
+        break;
+      }
 
-    if (allItems.length >= total || data.length < PAGE_SIZE) {
-      break;
+      const responseData = response.data as any;
+      let data: T[] = [];
+      let total = 0;
+
+      // 处理不同的TAPD API响应格式
+      if (Array.isArray(responseData)) {
+        // 直接返回数组的情况
+        data = responseData;
+        total = responseData.length;
+      } else if (responseData && typeof responseData === 'object') {
+        // 标准分页响应 { data: [...], total: N }
+        data = Array.isArray(responseData.data) ? responseData.data : [];
+        total = typeof responseData.total === 'number' ? responseData.total : data.length;
+        
+        // 如果data不是数组，记录警告
+        if (!Array.isArray(responseData.data) && responseData.data !== undefined && responseData.data !== null) {
+          logger.warn(`[TAPD Client] Unexpected data format for ${path}:`, {
+            dataType: typeof responseData.data,
+            dataValue: responseData.data,
+            fullResponse: Object.keys(responseData),
+          });
+        }
+      } else {
+        logger.warn(`[TAPD Client] Unexpected response type for ${path}:`, typeof responseData);
+        break;
+      }
+
+      allItems.push(...data);
+
+      // 分页终止条件
+      if (allItems.length >= total || data.length < PAGE_SIZE || data.length === 0) {
+        break;
+      }
+
+    } catch (error) {
+      // 单页请求失败，记录错误但继续（或根据情况中断）
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`[TAPD Client] Failed to fetch ${path} page ${page}:`, errorMsg);
+      
+      // 如果是第一页就失败，抛出异常；否则中断分页
+      if (page === 1) {
+        throw error;
+      } else {
+        // 后续页面失败，使用已获取的数据
+        logger.warn(`[TAPD Client] Stopping pagination at page ${page} due to error`);
+        break;
+      }
     }
   }
 

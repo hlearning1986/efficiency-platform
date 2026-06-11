@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Card, Button, Select, DatePicker, Checkbox, Radio, Table, Tag, message, Progress, Statistic, Row, Col, Tabs, Form } from 'antd';
-import { SyncOutlined, ReloadOutlined, HistoryOutlined, DatabaseOutlined, CheckCircleOutlined, CloseCircleOutlined, FilterOutlined, ClearOutlined } from '@ant-design/icons';
+import { Card, Button, Select, DatePicker, Checkbox, Radio, Table, Tag, message, Progress, Statistic, Row, Col, Tabs, Form, Tooltip, Switch, TimePicker, InputNumber, Divider, Space, Modal } from 'antd';
+import { SyncOutlined, ReloadOutlined, HistoryOutlined, DatabaseOutlined, CheckCircleOutlined, CloseCircleOutlined, FilterOutlined, ClearOutlined, SettingOutlined, BellOutlined, ClockCircleOutlined, InfoCircleOutlined, PlusOutlined, SaveOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -40,7 +40,18 @@ interface DataStats {
     projects: Array<{ value: string; label: string }>;
     iterations: Array<{ value: string; label: string; workspaceId: string }>;
     owners: Array<{ value: string; label: string }>;
-    statuses: Array<{ value: string; label: string }>;
+    statuses: Array<{
+      value: string;
+      label: string;
+      allValues?: string[];       // 🎯 所有对应的原始值（用于筛选）
+      isFromWorkflow?: boolean;   // 🎯 是否来自工作流配置
+    }>;
+    workflowMapping?: {          // 🎯 工作流映射信息
+      keyToChinese: Record<string, string>;
+      knownChineseValues: string[];
+      totalMappings: number;
+      hasWorkflowConfig: boolean;
+    };
   };
 }
 
@@ -48,23 +59,6 @@ interface Workspace {
   id: string;
   name: string;
 }
-
-// 根据中文状态名推断颜色（用于动态映射）
-const getStatusColor = (text: string): string => {
-  if (!text) return 'blue';
-  
-  if (/新建|规划|计划|分析|设计/.test(text)) return 'purple';
-  if (/开发|实现|进行|活跃/.test(text)) return 'blue';
-  if (/测试|QA|UAT/.test(text)) return 'magenta' || 'orange';
-  if (/待测试|等待/.test(text)) return 'orange';
-  if (/验收|验证|通过|完成|已实现|已完成/.test(text)) return 'green';
-  if (/发布|待发布/.test(text)) return 'gold';
-  if (/重新打开|返工/.test(text)) return 'orange';
-  if (/暂停|挂起/.test(text)) return 'warning' || 'default';
-  if (/拒绝|删除|取消|阻塞|关闭/.test(text)) return 'red';
-  
-  return 'blue'; // 默认蓝色
-};
 
 // TAPD 状态值到中文和颜色的完整映射
 // 支持多种格式：英文、TAPD状态码、中文、自定义状态
@@ -74,7 +68,13 @@ const getStatusConfig = (status: string, workflowStatusMap?: Record<string, stri
   
   const statusLower = status.toLowerCase().trim();
   
-  // 🎯 0. 优先使用动态工作流状态映射（来自 TAPD API）
+  // 🎯 0. 优先检查是否已经是中文（API已转换）
+  if (/[\u4e00-\u9fa5]/.test(status) && status.length <= 8) {
+    console.log(`🎯 使用API转换后的中文状态: "${status}"`);
+    return { color: getStatusColor(status), text: status };
+  }
+  
+  // 🎯 1. 优先使用动态工作流状态映射（来自 TAPD API）
   if (workflowStatusMap && Object.keys(workflowStatusMap).length > 0) {
     // 精确匹配（包括原始值和大小写不敏感）
     const dynamicText = workflowStatusMap[status] || 
@@ -155,13 +155,16 @@ const getStatusConfig = (status: string, workflowStatusMap?: Record<string, stri
     '重新打开': { color: 'orange', text: '重新打开' },
     '返工中': { color: 'volcano', text: '返工中' },
     
-    // ---- 暂停/挂起 ----
+    // ---- 暂停/挂起/需求暂停 ----
     'on_hold': { color: 'warning', text: '暂停' },
-    'status_8': { color: 'default', text: '挂起' },
+    'postponed': { color: 'warning', text: '需求暂停' },      // ✅ 新增
+    'status_8': { color: 'warning', text: '需求暂停' },        // ✅ 修正：从"挂起"改为"需求暂停"
+    'status_10': { color: 'warning', text: '需求暂停' },       // ✅ 新增
     'paused': { color: 'warning', text: '暂停' },
     'suspended': { color: 'default', text: '挂起' },
     '暂停': { color: 'warning', text: '暂停' },
     '挂起': { color: 'default', text: '挂起' },
+    '需求暂停': { color: 'warning', text: '需求暂停' },        // ✅ 新增
     
     // ---- 其他状态 ----
     'pending': { color: 'gold', text: '待处理' },
@@ -176,6 +179,13 @@ const getStatusConfig = (status: string, workflowStatusMap?: Record<string, stri
     'reviewing': { color: 'geekblue', text: '评审中' },
     'designing': { color: 'purple', text: '设计中' },
     'analyzing': { color: 'geekblue', text: '分析中' },
+    
+    // ---- 自定义状态（TAPD工作流配置）----
+    '待研发': { color: 'blue', text: '待研发' },
+    '待开发': { color: 'blue', text: '待开发' },
+    '待评审': { color: 'geekblue', text: '待评审' },
+    '待PRE': { color: 'orange', text: '待PRE' },
+    '前端联调中': { color: 'processing', text: '前端联调中' },
   };
   
   // 1. 精确匹配（包括大小写不敏感）
@@ -213,20 +223,98 @@ const getStatusConfig = (status: string, workflowStatusMap?: Record<string, stri
       5: { color: 'green', text: '已验收' },
       6: { color: 'gold', text: '待发布' },     // ← 修正！
       7: { color: 'orange', text: '重新打开' },
-      8: { color: 'default', text: '挂起' },
+      8: { color: 'warning', text: '需求暂停' }, // ✅ 修正：从"挂起"改为"需求暂停"
       9: { color: 'green', text: '已实现' },
+      10: { color: 'warning', text: '需求暂停' },// ✅ 新增
     };
-    return tapdCodeMap[code] || { color: 'blue', text: status };
+    
+    if (tapdCodeMap[code]) {
+      return tapdCodeMap[code];
+    }
   }
   
   // 6. 最终回退：返回原始值（可能是未知的自定义状态）
   return { color: 'blue', text: status };
 };
 
+// 🎯 根据中文状态名称返回对应的颜色
+const getStatusColor = (chineseStatus: string): string => {
+  const colorMap: Record<string, string> = {
+    // 新建阶段
+    '新建': 'cyan',
+    '新': 'cyan',  // 兼容
+    
+    // 规划/计划阶段
+    '规划中': 'purple',
+    '计划中': 'geekblue',
+    
+    // 开发阶段
+    '开发中': 'blue',
+    '进行中': 'blue',
+    
+    // 测试阶段
+    '测试中': 'magenta',
+    '待测试': 'orange',
+    'T测试完成': 'green',
+    '测试完成': 'lime',
+    '测试通过': 'success',
+    'QA测试中': 'processing',
+    'UAT测试中': 'processing',
+    
+    // 验收阶段
+    '已验收': 'green',
+    '已验证': 'success',
+    
+    // 发布阶段
+    '待发布': 'gold',
+    
+    // 已完成/已实现
+    '已实现': 'green',
+    '已完成': 'green',
+    
+    // 重新打开/返工
+    '重新打开': 'orange',
+    '返工中': 'volcano',
+    
+    // 暂停/挂起/需求暂停
+    '需求暂停': 'warning',
+    '暂停': 'warning',
+    '挂起': 'default',
+    
+    // 其他状态
+    '待处理': 'gold',
+    '活跃': 'processing',
+    '非活跃': 'default',
+    '已归档': 'default',
+    '已删除': 'error',
+    '已取消': 'error',
+    '已拒绝': 'red',
+    '阻塞': 'red',
+    '等待中': 'gold',
+    '评审中': 'geekblue',
+    '设计中': 'purple',
+    '分析中': 'geekblue',
+    '未开始': 'default',
+    '前端联调中': 'orange',
+    '待PRE': 'gold',
+    '待评审': 'geekblue',
+    'BUG修复中': 'red',
+    '当前迭代完成': 'green',
+  };
+  
+  return colorMap[chineseStatus] || 'blue';  // 默认蓝色
+};
+
 // 生成 TAPD 需求链接
 const getTapdStoryUrl = (record: { id: string; workspaceId?: string }) => {
   const workspaceId = record.workspaceId || '';
   return `https://www.tapd.cn/${workspaceId}/prong/stories/view/${record.id}`;
+};
+
+// 🆕 Task专用TAPD链接生成函数
+const getTapdTaskUrl = (record: { id: string; workspaceId?: string }) => {
+  const workspaceId = record.workspaceId || '';
+  return `https://www.tapd.cn/${workspaceId}/prong/tasks/view/${record.id}`;
 };
 
 // 表格列定义基础配置（静态部分）
@@ -319,11 +407,140 @@ const storyColumnsBase = [
 ];
 
 const taskColumns = [
-  { title: 'ID', dataIndex: 'id', key: 'id', width: 120, ellipsis: true },
-  { title: '名称', dataIndex: 'name', key: 'name', width: 300, ellipsis: true },
+  {
+    title: 'ID',
+    dataIndex: 'id',
+    key: 'id',
+    width: 140,
+    fixed: 'left' as const,
+    ellipsis: true,
+    render: (v: string, record: any) => (
+      <a
+        href={getTapdTaskUrl(record)}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`点击跳转到TAPD任务 #${v}`}
+      >
+        {v}
+      </a>
+    )
+  },
+  {
+    title: '名称',
+    dataIndex: 'name',
+    key: 'name',
+    width: 320,
+    fixed: 'left' as const,
+    ellipsis: true,
+    render: (v: string, record: any) => (
+      <a
+        href={getTapdTaskUrl(record)}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={v}
+      >
+        {v}
+      </a>
+    )
+  },
+  {
+    title: '所属项目',
+    dataIndex: ['workspace', 'name'],
+    key: 'workspaceName',
+    width: 150,
+    ellipsis: true,
+    render: (v: string, record: any) => {
+      const name = record.workspace?.name;
+      const wsId = record.workspaceId;
+
+      if (!wsId) return <span style={{color: '#999'}}>-</span>;
+
+      // ✅ 有项目名称
+      if (name) return name;
+
+      // ⚠️ 只有workspaceId（说明项目未同步到数据库）
+      return (
+        <Tooltip title={`项目ID: ${wsId}（请重新同步该项目以获取名称）`}>
+          <span style={{color: '#faad14', cursor: 'help'}}>
+            项目{wsId}
+          </span>
+        </Tooltip>
+      );
+    }
+  },
   { title: '状态', dataIndex: 'status', key: 'status', width: 80, render: (v: string) => <Tag color={v === 'done' ? 'green' : 'blue'}>{v}</Tag> },
+  {
+    title: '关联需求',
+    key: 'storyInfo',
+    width: 220,
+    ellipsis: true,
+    render: (_: unknown, record: any) => {
+      if (!record.story?.id) {
+        return <span style={{color: '#999'}}>-</span>;
+      }
+
+      const story = record.story;
+      const displayName = story.name || story.id;
+
+      return (
+        <a
+          href={getTapdStoryUrl(story)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`需求: ${displayName}`}
+        >
+          {displayName}
+        </a>
+      );
+    }
+  },
   { title: '处理人', dataIndex: 'owner', key: 'owner', width: 100 },
-  { title: '关联需求', dataIndex: 'storyId', key: 'storyId', width: 120 },
+  {
+    title: '预估工时',
+    dataIndex: 'effort',
+    key: 'effort',
+    width: 90,
+    align: 'right' as const,
+    render: (v: number | null) => {
+      if (v === null || v === undefined || v === 0) {
+        return <span style={{color: '#999'}}>-</span>;
+      }
+      return <span style={{color: '#1890ff', fontWeight: 500}}>{v}h</span>;
+    }
+  },
+  {
+    title: '实际工时',
+    dataIndex: 'effortCompleted',
+    key: 'effortCompleted',
+    width: 90,
+    align: 'right' as const,
+    render: (v: number | null) => {
+      if (v === null || v === undefined || v === 0) {
+        return <span style={{color: '#999'}}>-</span>;
+      }
+      return <span style={{color: '#52c41a', fontWeight: 500}}>{v}h</span>;
+    }
+  },
+  {
+    title: '完成时间',
+    dataIndex: 'completed',
+    key: 'completed',
+    width: 120,
+    render: (v: string | null) => {
+      if (!v) {
+        return <span style={{color: '#999'}}>-</span>;
+      }
+
+      try {
+        const date = dayjs(v);
+        if (!date.isValid()) return '-';
+
+        return date.format('YYYY-MM-DD');
+      } catch {
+        return '-';
+      }
+    }
+  },
   { title: '创建时间', dataIndex: 'created', key: 'created', width: 150, render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-' },
 ];
 
@@ -412,6 +629,7 @@ export default function TapdDataManagerPage() {
   const [dataStats, setDataStats] = useState<DataStats | null>(null);
   const [syncHistory, setSyncHistory] = useState<SyncJob[]>([]);
   const [currentJob, setCurrentJob] = useState<SyncJob | null>(null);
+  const [workspaceNameMap, setWorkspaceNameMap] = useState<Record<string, string>>({});
   
   // 自定义字段映射（动态）
   // keyToName: { "custom_field_11": "项目归属", ... }
@@ -455,6 +673,20 @@ export default function TapdDataManagerPage() {
   const [syncNotified, setSyncNotified] = useState(false);
   // 🛠️ 使用 ref 避免闭包陷阱（setInterval 中读取最新值）
   const syncNotifiedRef = useRef(false);
+  
+  // 自动同步配置相关状态
+  const [autoSyncConfig, setAutoSyncConfig] = useState<any>(null);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(true);
+  const [syncTimes, setSyncTimes] = useState<Dayjs[]>([dayjs('02:00', 'HH:mm')]);
+  const [daysBack, setDaysBack] = useState<number>(90);
+  const [syncStrategy, setSyncStrategy] = useState<string>('incremental');
+  const [autoSyncDataTypes, setAutoSyncDataTypes] = useState<string[]>(['story', 'task', 'iteration']);
+  const [notifyOnComplete, setNotifyOnComplete] = useState<boolean>(false);
+  const [notifyOnError, setNotifyOnError] = useState<boolean>(true);
+  const [savingConfig, setSavingConfig] = useState<boolean>(false);
+  const [executingAutoSync, setExecutingAutoSync] = useState<boolean>(false);
+  const [loadingConfig, setLoadingConfig] = useState<boolean>(true);
+  const [autoSyncCollapsed, setAutoSyncCollapsed] = useState<boolean>(false);
 
   
   /**
@@ -576,6 +808,269 @@ export default function TapdDataManagerPage() {
     
     return '-';
   }, [getFieldKeyByBusinessName, customFieldMapping]);
+  
+  // 自动同步配置相关函数
+  const loadAutoSyncConfig = useCallback(async () => {
+    try {
+      setLoadingConfig(true);
+      const response = await fetch('/api/v1/tapd/auto-sync/config');
+      const result = await response.json();
+      
+      if (result.success && result.data && result.data.length > 0) {
+        const config = result.data[0];
+        setAutoSyncConfig(config);
+        setAutoSyncEnabled(config.isEnabled);
+        setSyncTimes(config.syncTimes.map((t: string) => dayjs(t, 'HH:mm')));
+        setDaysBack(config.defaultDaysBack);
+        setSyncStrategy(config.syncStrategy);
+        setAutoSyncDataTypes(config.dataTypes);
+        setNotifyOnComplete(config.notifyOnComplete);
+        setNotifyOnError(config.notifyOnError);
+      } else {
+        setAutoSyncConfig(null);
+      }
+    } catch (error) {
+      console.error('Failed to load auto-sync config:', error);
+      message.error('加载自动同步配置失败');
+    } finally {
+      setLoadingConfig(false);
+    }
+  }, []);
+
+  const saveAutoSyncConfig = async () => {
+    try {
+      setSavingConfig(true);
+      
+      const configData = {
+        isEnabled: autoSyncEnabled,
+        name: 'TAPD 自动同步',
+        syncTimes: syncTimes.map(t => t.format('HH:mm')),
+        defaultDaysBack: daysBack,
+        dataTypes: autoSyncDataTypes,
+        syncStrategy,
+        notifyOnComplete,
+        notifyOnError,
+      };
+      
+      let response;
+      if (autoSyncConfig?.id) {
+        response = await fetch(`/api/v1/tapd/auto-sync/config/${autoSyncConfig.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(configData),
+        });
+      } else {
+        response = await fetch('/api/v1/tapd/auto-sync/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(configData),
+        });
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        message.success('✅ 自动同步配置保存成功');
+        setAutoSyncConfig(result.data);
+        
+        try {
+          await fetch('/api/v1/tapd/auto-sync/reload-scheduler', { method: 'POST' });
+        } catch (e) {
+          console.warn('Failed to reload scheduler:', e);
+        }
+      } else {
+        message.error(`❌ 保存失败: ${result.message}`);
+      }
+    } catch (error) {
+      console.error('Failed to save auto-sync config:', error);
+      message.error('❌ 保存自动同步配置失败');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  // 立即执行自动同步
+  const handleExecuteAutoSync = async () => {
+    if (!autoSyncConfig?.id) {
+      message.warning('请先保存自动同步配置');
+      return;
+    }
+
+    try {
+      setExecutingAutoSync(true);
+      
+      // 显示确认对话框
+      const confirmed = await new Promise<boolean>((resolve) => {
+        modal.confirm({
+          title: '确认执行同步',
+          content: `确定要立即执行一次自动同步吗？\n\n配置信息：\n- 同步策略: ${syncStrategy === 'incremental' ? '增量同步' : syncStrategy === 'full' ? '全量同步' : '智能同步'}\n- 数据类型: ${autoSyncDataTypes.join(', ')}`,
+          okText: '开始执行',
+          cancelText: '取消',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+
+      if (!confirmed) return;
+
+      message.loading('正在执行自动同步，请稍候...', 0);
+
+      // 调用执行API
+      const response = await fetch('/api/v1/tapd/auto-sync/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          configId: autoSyncConfig.id,
+        }),
+      });
+
+      const result = await response.json();
+
+      // 关闭loading
+      message.destroy();
+
+      if (result.success) {
+        message.success(`✅ 自动同步执行成功！同步了 ${result.stats?.recordsCount || 0} 条数据`);
+        
+        // 刷新配置和统计数据
+        await loadAutoSyncConfig();
+        await loadDataStats();
+        await loadSyncHistory();
+        
+        // 显示详细结果
+        modal.success({
+          title: '同步完成',
+          content: (
+            <div>
+              <p>✅ 自动同步已成功执行</p>
+              <p>📊 统计信息：</p>
+              <ul style={{ paddingLeft: 20, margin: '10px 0' }}>
+                {result.stats && Object.entries(result.stats).map(([key, value]) => (
+                  <li key={key}>{key}: {value}</li>
+                ))}
+                {result.duration && <li>⏱️ 执行耗时: {result.duration}秒</li>}
+              </ul>
+              <p style={{ color: '#8c8c8c', fontSize: 12 }}>⏰ 执行时间: {result.executedAt ? new Date(result.executedAt).toLocaleString() : '-'}</p>
+            </div>
+          ),
+        });
+      } else {
+        // 显示详细的错误信息
+        const errorMsg = result.error || result.message || '未知错误';
+        console.error('[AutoSync] 执行失败详情:', result);
+        
+        message.error({
+          content: (
+            <span>
+              ❌ 同步失败: {errorMsg}
+              {result.duration && <span style={{ marginLeft: 8, color: '#8c8c8c' }}>({result.duration}秒)</span>}
+            </span>
+          ),
+          duration: 5,
+        });
+        
+        // 显示详细的错误弹窗
+        modal.error({
+          title: '同步失败',
+          width: 600,
+          content: (
+            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+              <p><strong>错误信息：</strong></p>
+              <p style={{ color: '#ff4d4f', background: '#fff2f0', padding: 10, borderRadius: 4, marginBottom: 16 }}>
+                {errorMsg}
+              </p>
+              
+              {result.error && result.error.includes('data is not iterable') && (
+                <div style={{ background: '#fffbe6', padding: 12, borderRadius: 4, marginBottom: 16 }}>
+                  <p style={{ margin: 0, fontWeight: 'bold', color: '#d48806' }}>⚠️ 可能的原因：</p>
+                  <ul style={{ margin: '8px 0 0 20px', color: '#595959' }}>
+                    <li>TAPD API返回数据格式异常</li>
+                    <li>TAPD服务暂时不可用</li>
+                    <li>网络连接问题</li>
+                    <li>API凭证过期或权限不足</li>
+                  </ul>
+                </div>
+              )}
+              
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: 'pointer', color: '#1677ff' }}>查看技术详情</summary>
+                <pre style={{ 
+                  background: '#f5f5f5', 
+                  padding: 12, 
+                  borderRadius: 4, 
+                  marginTop: 8, 
+                  fontSize: 11,
+                  overflowX: 'auto',
+                  whiteSpace: 'pre-wrap'
+                }}>
+                  {JSON.stringify(result, null, 2)}
+                </pre>
+              </details>
+              
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
+                <p style={{ margin: 0, fontSize: 13, color: '#595959' }}>💡 建议操作：</p>
+                <ol style={{ margin: '8px 0 0 20px', fontSize: 13, color: '#595959' }}>
+                  <li>检查TAPD API配置（用户名、密码、公司名称）</li>
+                  <li>确认TAPD服务器可访问</li>
+                  <li>稍后重试或联系技术支持</li>
+                </ol>
+              </div>
+            </div>
+          ),
+          okText: '我知道了',
+        });
+        
+        // 刷新配置以更新状态
+        await loadAutoSyncConfig();
+      }
+    } catch (error) {
+      console.error('Failed to execute auto-sync:', error);
+      message.destroy();
+      message.error('❌ 执行自动同步时发生错误');
+    } finally {
+      setExecutingAutoSync(false);
+    }
+  };
+
+  const toggleAutoSync = async () => {
+    if (!autoSyncConfig?.id) return;
+    
+    try {
+      const response = await fetch(`/api/v1/tapd/auto-sync/config/${autoSyncConfig.id}/toggle`, {
+        method: 'PATCH',
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        setAutoSyncEnabled(result.data.isEnabled);
+        setAutoSyncConfig(result.data);
+        message.success(`✅ 自动同步已${result.data.isEnabled ? '启用' : '禁用'}`);
+      }
+    } catch (error) {
+      console.error('Failed to toggle auto-sync:', error);
+      message.error('❌ 操作失败');
+    }
+  };
+
+  const addSyncTime = () => {
+    if (syncTimes.length >= 5) {
+      message.warning('最多只能添加 5 个时间点');
+      return;
+    }
+    setSyncTimes([...syncTimes, dayjs('12:00', 'HH:mm')]);
+  };
+
+  const removeSyncTime = (index: number) => {
+    if (syncTimes.length <= 1) {
+      message.warning('至少需要保留一个时间点');
+      return;
+    }
+    setSyncTimes(syncTimes.filter((_, i) => i !== index));
+  };
+
+  useEffect(() => {
+    loadAutoSyncConfig();
+  }, [loadAutoSyncConfig]);
   
   // 🔴 关键修复：监听 customFieldMapping 变化，确保映射加载后再刷新数据
   // 解决 React 异步状态更新导致的时序竞态问题
@@ -726,21 +1221,27 @@ export default function TapdDataManagerPage() {
   // 解决：loadCustomFieldMapping 从未被调用导致 mappingLoaded 永远为 false
   useEffect(() => {
     const loadMappingForSelectedProjects = async () => {
-      // 如果选择了项目，加载第一个项目的字段映射
+      // 如果选择了项目，加载第一个项目的字段映射和工作流状态映射
       if (Array.isArray(filterWorkspaceId) && filterWorkspaceId.length > 0) {
         const firstProjectId = filterWorkspaceId[0];
-        console.log('🔄 项目选择变化，开始加载自定义字段映射, workspaceId:', firstProjectId);
+        console.log('🔄 项目选择变化，开始加载配置, workspaceId:', firstProjectId);
 
         // 🛠️ 重置 mappingLoaded 状态（正在加载中）
         setMappingLoaded(false);
 
-        // 加载字段映射
-        await loadCustomFieldMapping(firstProjectId);
+        // 🎯 并行加载：自定义字段映射 + 工作流状态映射
+        await Promise.all([
+          loadCustomFieldMapping(firstProjectId),
+          loadWorkflowStatusMap(firstProjectId),  // 🆕 关键修复：同时加载工作流状态映射
+        ]);
+        
+        console.log(`✅ 项目 ${firstProjectId} 的所有配置已加载完成`);
       } else {
         // 未选择项目时，标记为已加载（不需要显示 loading）
-        console.log('⚠️ 未选择项目，跳过字段映射加载');
+        console.log('⚠️ 未选择项目，跳过配置加载');
         setMappingLoaded(true);
         setCustomFieldMapping({});
+        setWorkflowStatusMap({});  // 🆕 清空工作流状态映射
       }
     };
 
@@ -848,6 +1349,30 @@ export default function TapdDataManagerPage() {
       const result = await resp.json();
       if (result.success) {
         setDataStats(result.data);
+        
+        // 🎯 同步更新 workflowStatusMap（用于表格状态列的中文显示）
+        if (result.data?.filters?.workflowMapping?.keyToChinese) {
+          setWorkflowStatusMap(result.data.filters.workflowMapping.keyToChinese);
+          console.log('✅ [数据统计] 已同步更新 workflowStatusMap:', 
+            Object.keys(result.data.filters.workflowMapping.keyToChinese).length, '个映射');
+        }
+        
+        // 🎯 输出工作流映射信息（调试用）
+        if (result.data?.filters?.workflowMapping) {
+          const wm = result.data.filters.workflowMapping;
+          console.log(`\n📊 [数据统计] ✅ 工作流状态映射已加载:`);
+          console.log(`   - 总映射数: ${wm.totalMappings}`);
+          console.log(`   - 工作流已配置: ${wm.hasWorkflowConfig ? '✅ 是' : '❌ 否'}`);
+          console.log(`   - 中文状态值 (${wm.knownChineseValues?.length || 0}个):`, wm.knownChineseValues?.slice(0, 5));
+          
+          if (result.data?.filters?.statuses) {
+            console.log(`\n   状态筛选选项 (${result.data.filters.statuses.length}个):`);
+            result.data.filters.statuses.slice(0, 10).forEach((s: { label: string; value: string; isFromWorkflow?: boolean }) => {
+              const mark = s.isFromWorkflow ? '✓' : ' ';
+              console.log(`     ${mark} "${s.label}" (${s.value})`);
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('加载数据统计失败:', error);
@@ -860,6 +1385,28 @@ export default function TapdDataManagerPage() {
       const result = await resp.json();
       if (result.success) {
         setSyncHistory(result.data || []);
+
+        // 收集所有workspace ID
+        const allWorkspaceIds = new Set<string>();
+        (result.data || []).forEach((job: SyncJob) => {
+          job.workspaceIds?.forEach(id => allWorkspaceIds.add(id));
+        });
+
+        if (allWorkspaceIds.size > 0) {
+          try {
+            const workspaceResp = await fetch(`/api/v1/tapd/workspaces?ids=${Array.from(allWorkspaceIds).join(',')}`);
+            const workspaceResult = await workspaceResp.json();
+            if (workspaceResult.success && workspaceResult.data) {
+              const nameMap: Record<string, string> = {};
+              (workspaceResult.data as Array<{ id: string; name: string }>).forEach(ws => {
+                nameMap[ws.id] = ws.name;
+              });
+              setWorkspaceNameMap(nameMap);
+            }
+          } catch (e) {
+            console.warn('加载项目名称失败:', e);
+          }
+        }
       }
     } catch (error) {
       console.error('加载同步历史失败:', error);
@@ -967,6 +1514,90 @@ export default function TapdDataManagerPage() {
       message.error(msg);
     }
   }, [selectedWorkspaces, dataTypes, dateRange, updatePolicy]);
+
+  // 重试失败的同步任务
+  const handleRetry = useCallback(async (job: SyncJob) => {
+    if (!job.workspaceIds?.length) {
+      message.warning('该任务没有项目信息，无法重试');
+      return;
+    }
+
+    setSyncing(true);
+    setSyncProgress(0);
+    setSyncMsg('正在创建重试同步任务...');
+    setSyncNotified(false);
+    syncNotifiedRef.current = false;
+
+    try {
+      const resp = await fetch('/api/v1/tapd/sync/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceIds: job.workspaceIds,
+          dataTypes: job.dataTypes || ['story', 'task', 'iteration'],
+          timeRange: {
+            begin: dayjs().subtract(3, 'month').format('YYYY-MM-DD'),
+            end: dayjs().format('YYYY-MM-DD'),
+          },
+          updatePolicy,
+        }),
+      });
+
+      const result = await resp.json();
+      if (!result.success) {
+        throw new Error(result.message || '创建重试同步任务失败');
+      }
+
+      const jobId = result.jobId;
+      setSyncMsg('重试同步任务已启动，正在同步数据...');
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResp = await fetch(`/api/v1/tapd/sync/jobs/${jobId}`);
+
+          if (!statusResp.ok) return;
+
+          const statusResult = await statusResp.json();
+
+          if (statusResult.success) {
+            const retryJob = statusResult.data;
+            setCurrentJob(retryJob);
+            setSyncProgress(retryJob.progress || 0);
+
+            if (retryJob.status === 'completed') {
+              clearInterval(pollInterval);
+              setSyncing(false);
+              setSyncMsg(`重试同步完成！需求 ${retryJob.storyCount || 0} 条，任务 ${retryJob.taskCount || 0} 条`);
+              if (!syncNotifiedRef.current) {
+                syncNotifiedRef.current = true;
+                setSyncNotified(true);
+                message.success('重试同步成功');
+              }
+              loadDataStats(getCurrentFilters());
+              loadSyncHistory();
+            } else if (retryJob.status === 'failed') {
+              clearInterval(pollInterval);
+              setSyncing(false);
+              setSyncMsg(`重试同步失败: ${retryJob.errorMsg || '未知错误'}`);
+              if (!syncNotifiedRef.current) {
+                syncNotifiedRef.current = true;
+                setSyncNotified(true);
+                message.error('重试同步失败');
+              }
+            }
+          }
+        } catch (e) {
+          console.error('查询重试同步状态失败:', e);
+        }
+      }, 3000);
+
+    } catch (error) {
+      setSyncing(false);
+      const msg = error instanceof Error ? error.message : '重试同步失败';
+      setSyncMsg(`重试失败: ${msg}`);
+      message.error(msg);
+    }
+  }, [updatePolicy]);
   
   // 获取当前筛选条件
   const getCurrentFilters = () => ({
@@ -1003,10 +1634,13 @@ export default function TapdDataManagerPage() {
         params.append('workspaceId', currentParams.workspaceId);
       }
 
-      // 🛠️ 支持多选：数组参数用逗号连接（后端会解析为 IN 查询）
+      // 🎯 状态筛选：直接发送中文标签，后端会做精确匹配
       if (Array.isArray(currentParams.status) && currentParams.status.length > 0) {
-        params.append('status', currentParams.status.join(','));
+        const chineseLabels = currentParams.status.filter(s => s && s.trim() !== '');
+        console.log(`✅ 状态筛选（中文标签）: [${chineseLabels.join(', ')}]`);
+        params.append('status', chineseLabels.join(','));
       }
+      
       if (Array.isArray(currentParams.iterationId) && currentParams.iterationId.length > 0) {
         params.append('iterationId', currentParams.iterationId.join(','));
       }
@@ -1036,7 +1670,12 @@ export default function TapdDataManagerPage() {
       const result = await resp.json();
       if (result.success) {
         setTableData(result.data || []);
-        setTablePagination(prev => ({ ...prev, current: page, total: result.total || 0 }));
+        setTablePagination(prev => ({ 
+          ...prev, 
+          current: page, 
+          pageSize,
+          total: result.total || 0 
+        }));
         console.log(`✅ 数据加载成功: ${result.data?.length || 0} 条记录, 总计 ${result.total || 0} 条`);
       }
     } catch (error) {
@@ -1044,7 +1683,7 @@ export default function TapdDataManagerPage() {
     } finally {
       setTableLoading(false);
     }
-  }, [activeTab]);  // 🛠️ 只依赖 activeTab，其他参数从 ref 读取
+  }, [activeTab, dataStats]);  // 🛠️ 依赖 activeTab 和 dataStats（用于状态转换）
 
   // 🛠️ 修复Bug2: 完善的useEffect - 监听所有筛选条件变化并自动加载数据
   useEffect(() => {
@@ -1288,17 +1927,24 @@ export default function TapdDataManagerPage() {
   };
   
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">TAPD 数据管理</h1>
-        <Button icon={<ReloadOutlined />} onClick={() => { loadDataStats(); loadSyncHistory(); }}>刷新</Button>
+    <div className="tapd-data-manager">
+      {/* 页面标题栏 */}
+      <div className="page-header-linear">
+        <div className="header-left">
+          <DatabaseOutlined className="header-icon" />
+          <h1 className="header-title">TAPD 数据管理</h1>
+        </div>
+        <Button icon={<ReloadOutlined />} onClick={() => { loadDataStats(); loadSyncHistory(); }} size="middle">
+          刷新数据
+        </Button>
       </div>
-      
+
       {/* 同步操作区 */}
-      <Card title="同步操作" variant="bordered" className="shadow-sm">
-        <div className="space-y-4">
-          <div className="flex items-center gap-4">
-            <span className="w-20 text-right">TAPD项目:</span>
+      <div className="section-linear">
+        <div className="section-title">同步操作</div>
+        <div className="form-grid">
+          <div className="form-item">
+            <label className="form-label">TAPD项目</label>
             <Select
               mode="multiple"
               placeholder="请选择项目"
@@ -1308,7 +1954,7 @@ export default function TapdDataManagerPage() {
                 { label: '全选', value: '__SELECT_ALL__' },
                 ...workspaces.map(w => ({ label: w.name, value: w.id }))
               ]}
-              style={{ minWidth: 400 }}
+              style={{ width: '100%' }}
               maxTagCount={5}
               onSelect={(value: string) => {
                 if (value === '__SELECT_ALL__') {
@@ -1322,9 +1968,9 @@ export default function TapdDataManagerPage() {
               }}
             />
           </div>
-          
-          <div className="flex items-center gap-4">
-            <span className="w-20 text-right">数据类型:</span>
+
+          <div className="form-item">
+            <label className="form-label">数据类型</label>
             <Checkbox.Group
               value={dataTypes}
               onChange={(v) => setDataTypes(v as string[])}
@@ -1337,148 +1983,364 @@ export default function TapdDataManagerPage() {
               ]}
             />
           </div>
-          
-          <div className="flex items-center gap-4">
-            <span className="w-20 text-right">时间范围:</span>
-            <RangePicker
-              value={dateRange}
-              onChange={(v) => v && setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs])}
-              format="YYYY-MM-DD"
-            />
-            <span className="text-gray-500 text-sm">(需求创建时间)</span>
+
+          <div className="form-item form-item-full">
+            <label className="form-label">时间范围</label>
+            <div className="range-picker-wrapper">
+              <RangePicker
+                value={dateRange}
+                onChange={(v) => v && setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs])}
+                format="YYYY-MM-DD"
+                style={{ width: '100%' }}
+              />
+              <span className="form-hint">(需求创建时间)</span>
+            </div>
           </div>
-          
-          <div className="flex items-center gap-4">
-            <span className="w-20 text-right">更新策略:</span>
+
+          <div className="form-item">
+            <label className="form-label">更新策略</label>
             <Radio.Group value={updatePolicy} onChange={(e) => setUpdatePolicy(e.target.value)}>
-              <Radio value="upsert">覆盖更新 (存在则覆盖)</Radio>
-              <Radio value="incremental">增量更新 (只新增)</Radio>
+              <Radio value="upsert">覆盖更新</Radio>
+              <Radio value="incremental">增量更新</Radio>
             </Radio.Group>
           </div>
-          
-          <div className="flex justify-end">
+
+          <div className="form-item form-item-action">
             <Button
               type="primary"
               icon={<SyncOutlined spin={syncing} />}
               onClick={handleSync}
               disabled={syncing}
               size="large"
+              block
             >
               {syncing ? '同步中...' : '开始同步'}
             </Button>
           </div>
         </div>
-      </Card>
+      </div>
+      
+      {/* 自动同步配置 */}
+      <div className="section-linear">
+        <div className="section-header-collapsible" onClick={() => setAutoSyncCollapsed(!autoSyncCollapsed)}>
+          <div className="header-left">
+            <SettingOutlined style={{ color: '#722ed1', fontSize: 14 }} />
+            <span className="section-title">自动同步配置</span>
+            {autoSyncConfig?.lastStatus && (
+              <Tag color={autoSyncConfig.lastStatus === 'success' ? 'success' : 'error'} size="small">
+                上次: {autoSyncConfig.lastStatus === 'success' ? '成功' : '失败'}
+              </Tag>
+            )}
+          </div>
+          {autoSyncCollapsed ? <DownOutlined /> : <UpOutlined />}
+        </div>
+
+        {!autoSyncCollapsed && (
+        <div className="config-content">
+          {/* 总开关 */}
+          <div className="config-row config-row-highlight">
+            <div className="config-label-group">
+              <BellOutlined style={{ color: '#1677ff' }} />
+              <span>自动同步</span>
+              <Tooltip title="开启后将按照设定的时间自动同步 TAPD 数据">
+                <InfoCircleOutlined style={{ color: '#8c8c8c', cursor: 'pointer' }} />
+              </Tooltip>
+            </div>
+            <Switch
+              checked={autoSyncEnabled}
+              onChange={toggleAutoSync}
+              checkedChildren="开启"
+              unCheckedChildren="关闭"
+              disabled={!autoSyncConfig}
+            />
+          </div>
+
+          {autoSyncEnabled && (
+            <>
+              {/* 执行时间 */}
+              <div className="config-subsection">
+                <div className="subsection-title">
+                  <ClockCircleOutlined style={{ color: '#1677ff' }} />
+                  执行时间
+                </div>
+                <div className="subsection-content">
+                  <div className="sync-time-info">
+                    每天 {syncTimes.length > 0 ? syncTimes.map(t => t.format('HH:mm')).join('、') : '未设置'} 执行一次
+                  </div>
+                  <div className="time-picker-list">
+                    {syncTimes.map((time, index) => (
+                      <Space key={index}>
+                        <TimePicker
+                          value={time}
+                          format="HH:mm"
+                          onChange={(value) => {
+                            const newTimes = [...syncTimes];
+                            newTimes[index] = value!;
+                            setSyncTimes(newTimes);
+                          }}
+                          minuteStep={15}
+                          size="middle"
+                        />
+                        {syncTimes.length > 1 && (
+                          <Button size="small" danger onClick={() => removeSyncTime(index)} icon={<CloseCircleOutlined />}>
+                            删除
+                          </Button>
+                        )}
+                      </Space>
+                    ))}
+                    {syncTimes.length < 5 && (
+                      <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addSyncTime}>
+                        添加时间
+                      </Button>
+                    )}
+                  </div>
+                  <div className="config-hint">最多可设置 5 个时间点，建议选择业务低峰期</div>
+                </div>
+              </div>
+
+              {/* 同步范围 */}
+              <div className="config-subsection">
+                <div className="subsection-title">
+                  <DatabaseOutlined style={{ color: '#52c41a' }} />
+                  同步范围
+                </div>
+                <div className="subsection-content">
+                  <div className="config-row">
+                    <span className="config-label">数据范围</span>
+                    <Space>
+                      <span>同步最近</span>
+                      <InputNumber min={7} max={365} step={1} value={daysBack} onChange={(value) => setDaysBack(value || 90)} size="middle" />
+                      <span>天的数据</span>
+                    </Space>
+                  </div>
+                  <div className="config-row">
+                    <span className="config-label">数据类型</span>
+                    <Checkbox.Group
+                      value={autoSyncDataTypes}
+                      onChange={(v) => setAutoSyncDataTypes(v as string[])}
+                      options={[
+                        { label: '需求', value: 'story' },
+                        { label: '任务', value: 'task' },
+                        { label: '迭代', value: 'iteration' },
+                        { label: '缺陷', value: 'bug' },
+                        { label: '工时', value: 'timesheet' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 同步策略 */}
+              <div className="config-subsection">
+                <div className="subsection-title">
+                  <SyncOutlined style={{ color: '#fa8c16' }} />
+                  同步策略
+                </div>
+                <div className="subsection-content">
+                  <div className="config-row">
+                    <span className="config-label">策略</span>
+                    <Select value={syncStrategy} onChange={setSyncStrategy} style={{ width: 200 }} size="middle"
+                      options={[
+                        { value: 'incremental', label: '增量同步' },
+                        { value: 'full', label: '全量同步' },
+                        { value: 'smart', label: '智能同步' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 通知设置 */}
+              <div className="config-subsection">
+                <div className="subsection-title">
+                  <BellOutlined style={{ color: '#eb2f96' }} />
+                  通知设置
+                </div>
+                <div className="subsection-content">
+                  <Checkbox checked={notifyOnComplete} onChange={(e) => setNotifyOnComplete(e.target.checked)}>
+                    同步完成时通知
+                  </Checkbox>
+                  <Checkbox checked={notifyOnError} onChange={(e) => setNotifyOnError(e.target.checked)} style={{ marginLeft: 16 }}>
+                    同步失败时通知
+                  </Checkbox>
+                </div>
+              </div>
+
+              {/* 运行状态 */}
+              {autoSyncConfig && (
+                <div className="config-subsection">
+                  <div className="subsection-title">
+                    <InfoCircleOutlined style={{ color: '#722ed1' }} />
+                    运行状态
+                  </div>
+                  <div className="subsection-content status-info">
+                    <div><span>上次执行:</span> <strong>{autoSyncConfig.lastExecutedAt ? dayjs(autoSyncConfig.lastExecutedAt).format('YYYY-MM-DD HH:mm:ss') : '暂无记录'}</strong></div>
+                    <div><span>上次状态:</span> <Tag color={autoSyncConfig.lastStatus === 'success' ? 'success' : autoSyncConfig.lastStatus === 'failed' ? 'error' : 'default'}>
+                      {autoSyncConfig.lastStatus === 'success' ? '成功' : autoSyncConfig.lastStatus === 'failed' ? '失败' : '未知'}
+                    </Tag></div>
+                    <div><span>下次执行:</span> <strong style={{ color: '#1677ff' }}>{autoSyncConfig.nextExecuteAt ? dayjs(autoSyncConfig.nextExecuteAt).format('YYYY-MM-DD HH:mm:ss') : '待计算'}</strong></div>
+                  </div>
+                </div>
+              )}
+
+              {/* 操作按钮 */}
+              <div className="config-actions">
+                <Space size="middle">
+                  <Button 
+                    type="default" 
+                    icon={<SyncOutlined spin={executingAutoSync} />} 
+                    loading={executingAutoSync}
+                    onClick={handleExecuteAutoSync}
+                    size="large"
+                    disabled={!autoSyncConfig?.id || executingAutoSync}
+                  >
+                    {executingAutoSync ? '执行中...' : '立即执行'}
+                  </Button>
+                  <Button type="primary" icon={<SaveOutlined />} loading={savingConfig} onClick={saveAutoSyncConfig} size="large">
+                    保存配置
+                  </Button>
+                </Space>
+              </div>
+            </>
+          )}
+
+          {!autoSyncConfig && !loadingConfig && (
+            <div className="empty-config">
+              <SettingOutlined style={{ fontSize: 32, marginBottom: 12, color: '#d9d9d9' }} />
+              <p>点击上方开关启用自动同步功能</p>
+            </div>
+          )}
+        </div>
+        )}
+      </div>
       
       {/* 同步进度 */}
       {syncing && currentJob && (
-        <Card title="同步进度" variant="bordered" className="shadow-sm">
-          <div className="space-y-2">
-            <Progress percent={syncProgress} status="active" />
-            <p>{syncMsg}</p>
-            <p className="text-gray-500">
+        <div className="section-linear section-highlight">
+          <div className="section-title">同步进度</div>
+          <div className="progress-content">
+            <Progress percent={syncProgress} status="active" strokeColor="#1677ff" />
+            <p className="progress-msg">{syncMsg}</p>
+            <p className="progress-detail">
               已同步: 迭代 {currentJob.iterationCount} 个, 需求 {currentJob.storyCount} 个, 任务 {currentJob.taskCount} 个
             </p>
           </div>
-        </Card>
-      )}
-      
-      {/* 数据概览 */}
-      <Card 
-        title={
-          <div className="flex items-center gap-2">
-            <span>数据概览</span>
-            {(filterWorkspaceId || filterStatus || filterIterationId || filterOwner || filterCreatedRange || filterCompletedRange) && (
-              <Tag color="blue" size="small">已筛选</Tag>
-            )}
-          </div>
-        } 
-        variant="bordered" 
-        className="shadow-sm"
-      >
-        <Row gutter={[16, 16]}>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic title="需求数" value={dataStats?.storyCount || 0} prefix={<DatabaseOutlined />} />
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic title="任务数" value={dataStats?.taskCount || 0} prefix={<DatabaseOutlined />} />
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic title="迭代数" value={dataStats?.iterationCount || 0} prefix={<DatabaseOutlined />} />
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic title="缺陷数" value={dataStats?.bugCount || 0} prefix={<DatabaseOutlined />} />
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic 
-              title="预估工时" 
-              value={dataStats?.estimatedEffort || 0} 
-              prefix={<DatabaseOutlined />}
-              suffix="h"
-            />
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic 
-              title="实际工时" 
-              value={dataStats?.actualEffort || 0} 
-              prefix={<DatabaseOutlined />}
-              suffix="h"
-            />
-          </Col>
-          <Col xs={12} sm={8} md={6} lg={4}>
-            <Statistic title="项目数" value={dataStats?.workspaceCount || 0} prefix={<DatabaseOutlined />} />
-          </Col>
-        </Row>
-        <div className="mt-4 text-gray-500">
-          最后同步: {dataStats?.lastSyncAt ? dayjs(dataStats.lastSyncAt).format('YYYY-MM-DD HH:mm:ss') : '暂无数据'}
-          {' | '}
-          同步状态: {dataStats?.lastSyncStatus === 'success' ? '✅ 成功' : dataStats?.lastSyncStatus === 'failed' ? '❌ 失败' : '暂无'}
         </div>
-      </Card>
+      )}
+
+      {/* 数据概览 - 统计条状布局 */}
+      <div className="section-linear">
+        <div className="section-header-with-tag">
+          <span className="section-title">数据概览</span>
+          {(filterWorkspaceId || filterStatus || filterIterationId || filterOwner || filterCreatedRange || filterCompletedRange) && (
+            <Tag color="blue" size="small">已筛选</Tag>
+          )}
+        </div>
+
+        <div className="stats-bar-linear">
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-blue">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">需求数</div>
+              <div className="stat-value-linear">{dataStats?.storyCount || 0}</div>
+            </div>
+          </div>
+
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-orange">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">任务数</div>
+              <div className="stat-value-linear">{dataStats?.taskCount || 0}</div>
+            </div>
+          </div>
+
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-green">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">迭代数</div>
+              <div className="stat-value-linear">{dataStats?.iterationCount || 0}</div>
+            </div>
+          </div>
+
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-red">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">缺陷数</div>
+              <div className="stat-value-linear">{dataStats?.bugCount || 0}</div>
+            </div>
+          </div>
+
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-purple">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">预估工时</div>
+              <div className="stat-value-linear">{dataStats?.estimatedEffort || 0}<span className="stat-suffix-linear">h</span></div>
+            </div>
+          </div>
+
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-cyan">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">实际工时</div>
+              <div className="stat-value-linear">{dataStats?.actualEffort || 0}<span className="stat-suffix-linear">h</span></div>
+            </div>
+          </div>
+
+          <div className="stat-item-linear">
+            <div className="stat-icon-linear stat-icon-default">
+              <DatabaseOutlined />
+            </div>
+            <div className="stat-content-linear">
+              <div className="stat-label-linear">项目数</div>
+              <div className="stat-value-linear">{dataStats?.workspaceCount || 0}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="stats-footer">
+          <span>最后同步: {dataStats?.lastSyncAt ? dayjs(dataStats.lastSyncAt).format('YYYY-MM-DD HH:mm:ss') : '暂无数据'}</span>
+          <span>同步状态: {dataStats?.lastSyncStatus === 'success' ? '成功' : dataStats?.lastSyncStatus === 'failed' ? '失败' : '暂无'}</span>
+        </div>
+      </div>
       
       {/* 数据明细 */}
-      <Card 
-        title={
-          <div className="flex items-center justify-between">
-            <span>数据明细</span>
-            <Button 
-              type="link" 
-              size="small" 
-              icon={<ClearOutlined />}
-              onClick={handleResetFilters}
-            >
-              重置筛选
-            </Button>
-          </div>
-        } 
-        variant="bordered" 
-        className="shadow-sm"
-      >
+      <div className="section-linear">
+        <div className="section-header-with-action">
+          <span className="section-title">数据明细</span>
+          <Button type="link" size="small" icon={<ClearOutlined />} onClick={handleResetFilters}>
+            重置筛选
+          </Button>
+        </div>
+
         {/* 筛选区域 */}
-        <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-          <div className="flex items-center gap-2 mb-2">
-            <FilterOutlined />
-            <span className="font-medium">筛选条件</span>
+        <div className="filter-section">
+          <div className="filter-header">
+            <FilterOutlined style={{ color: '#1677ff', fontSize: 13 }} />
+            <span>筛选条件</span>
           </div>
           <Row gutter={[16, 12]} align="middle">
             <Col xs={24} sm={12} md={8} lg={6}>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">所属项目</label>
+              <div className="filter-item">
+                <label className="filter-label">所属项目</label>
                 <Select
-                  mode="multiple"  // 🛠️ 支持多选
+                  mode="multiple"
                   placeholder="全部项目"
                   allowClear
                   value={filterWorkspaceId}
                   onChange={(value) => {
-                    console.log('📝 项目筛选变更:', value);
-                    handleMultiSelectChange(
-                      value as string[],
-                      dataStats?.filters?.projects || [],
-                      setFilterWorkspaceId,
-                      100  // 较短延迟，因为会触发异步加载
-                    );
-
-                    // 🛠️ 清空迭代选择（项目变化后迭代可能不适用）
+                    handleMultiSelectChange(value as string[], dataStats?.filters?.projects || [], setFilterWorkspaceId, 100);
                     setFilterIterationId([]);
                   }}
                   options={addSelectAllOption(dataStats?.filters?.projects || [])}
@@ -1486,113 +2348,86 @@ export default function TapdDataManagerPage() {
                   showSearch
                   optionFilterProp="label"
                   maxTagCount="responsive"
+                  size="middle"
                 />
               </div>
             </Col>
-            
+
             <Col xs={24} sm={12} md={8} lg={6}>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">状态</label>
+              <div className="filter-item">
+                <label className="filter-label">状态</label>
                 <Select
-                  mode="multiple"  // 🛠️ 支持多选
+                  mode="multiple"
                   placeholder="全部状态"
                   allowClear
                   value={filterStatus}
-                  onChange={(value) => {
-                    handleMultiSelectChange(
-                      value as string[],
-                      dataStats?.filters?.statuses || [],
-                      setFilterStatus,
-                      200
-                    );
-                  }}
+                  onChange={(value) => handleMultiSelectChange(value as string[], dataStats?.filters?.statuses || [], setFilterStatus, 200)}
                   options={addSelectAllOption(dataStats?.filters?.statuses || [])}
                   style={{ width: '100%' }}
-                  maxTagCount="responsive"  // 超出时显示 +N
+                  maxTagCount="responsive"
+                  size="middle"
                 />
               </div>
             </Col>
-            
+
             <Col xs={24} sm={12} md={8} lg={6}>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">迭代</label>
+              <div className="filter-item">
+                <label className="filter-label">迭代</label>
                 <Select
-                  mode="multiple"  // 🛠️ 支持多选
+                  mode="multiple"
                   placeholder="全部迭代"
                   allowClear
                   value={filterIterationId}
-                  onChange={(value) => {
-                    handleMultiSelectChange(
-                      value as string[],
-                      filteredIterations,
-                      setFilterIterationId,
-                      200
-                    );
-                  }}
+                  onChange={(value) => handleMultiSelectChange(value as string[], filteredIterations, setFilterIterationId, 200)}
                   options={addSelectAllOption(filteredIterations)}
                   style={{ width: '100%' }}
                   showSearch
                   optionFilterProp="label"
                   notFoundContent="请先选择项目"
                   maxTagCount="responsive"
+                  size="middle"
                 />
               </div>
             </Col>
-            
+
             <Col xs={24} sm={12} md={8} lg={6}>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">处理人</label>
+              <div className="filter-item">
+                <label className="filter-label">处理人</label>
                 <Select
-                  mode="multiple"  // 🛠️ 支持多选
+                  mode="multiple"
                   placeholder="全部处理人"
                   allowClear
                   value={filterOwner}
-                  onChange={(value) => {
-                    handleMultiSelectChange(
-                      value as string[],
-                      dataStats?.filters?.owners || [],
-                      setFilterOwner,
-                      200
-                    );
-                  }}
+                  onChange={(value) => handleMultiSelectChange(value as string[], dataStats?.filters?.owners || [], setFilterOwner, 200)}
                   options={addSelectAllOption(dataStats?.filters?.owners || [])}
                   style={{ width: '100%' }}
                   showSearch
                   optionFilterProp="label"
                   maxTagCount="responsive"
+                  size="middle"
                 />
               </div>
             </Col>
-            
+
             <Col xs={24} sm={12} md={8} lg={6}>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">创建时间</label>
+              <div className="filter-item">
+                <label className="filter-label">创建时间</label>
                 <RangePicker
                   value={filterCreatedRange}
-                  onChange={(dates) => {
-                    console.log('📝 创建时间筛选变更:', dates);
-                    setFilterCreatedRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-                    // 🛠️ 修复：使用防抖触发
-                    triggerFilterChange(300);
-                  }}
+                  onChange={(dates) => { setFilterCreatedRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null); triggerFilterChange(300); }}
                   format="YYYY-MM-DD"
                   style={{ width: '100%' }}
                   size="middle"
                 />
               </div>
             </Col>
-            
+
             <Col xs={24} sm={12} md={8} lg={6}>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-gray-500">完成时间</label>
+              <div className="filter-item">
+                <label className="filter-label">完成时间</label>
                 <RangePicker
                   value={filterCompletedRange}
-                  onChange={(dates) => {
-                    console.log('📝 完成时间筛选变更:', dates);
-                    setFilterCompletedRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null);
-                    // 🛠️ 修复：使用防抖触发
-                    triggerFilterChange(300);
-                  }}
+                  onChange={(dates) => { setFilterCompletedRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null); triggerFilterChange(300); }}
                   format="YYYY-MM-DD"
                   style={{ width: '100%' }}
                   size="middle"
@@ -1601,7 +2436,8 @@ export default function TapdDataManagerPage() {
             </Col>
           </Row>
         </div>
-        
+
+        {/* 标签页和表格 */}
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
@@ -1612,51 +2448,501 @@ export default function TapdDataManagerPage() {
             { key: 'bug', label: `缺陷 (${dataStats?.bugCount || 0})` },
             { key: 'timesheet', label: `工时 (${dataStats?.timesheetCount || 0})` },
           ]}
+          className="linear-tabs"
         />
         <Table
           columns={columns}
           dataSource={tableData}
-          // 🛠️ 修复：正确处理数组类型的 filterWorkspaceId
-          // 原来的 bug: [] (空数组) 是 truthy，导致一直转圈
           loading={
             tableLoading ||
-            (
-              Array.isArray(filterWorkspaceId) &&
-              filterWorkspaceId.length > 0 &&
-              !mappingLoaded
-            )
+            (Array.isArray(filterWorkspaceId) && filterWorkspaceId.length > 0 && !mappingLoaded)
           }
           rowKey="id"
           pagination={{
             ...tablePagination,
             showSizeChanger: true,
             showTotal: (total) => `共 ${total} 条`,
+            pageSizeOptions: ['10', '20', '50', '100'],
             onChange: (page, pageSize) => loadTableData(page, pageSize),
+            onShowSizeChange: (current, size) => loadTableData(1, size),
           }}
           scroll={{ x: 2400 }}
           size="small"
+          className="linear-table"
         />
-      </Card>
-      
+      </div>
+
       {/* 同步历史 */}
-      <Card title="同步历史" variant="bordered" className="shadow-sm" extra={<HistoryOutlined />}>
+      <div className="section-linear">
+        <div className="section-header-with-icon">
+          <span className="section-title">同步历史</span>
+          <HistoryOutlined style={{ color: '#8c8c8c' }} />
+        </div>
         <Table
           dataSource={syncHistory}
           rowKey="id"
           columns={[
             { title: '开始时间', dataIndex: 'startedAt', key: 'startedAt', width: 180, render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
-            { title: '项目数', dataIndex: 'workspaceIds', key: 'workspaceCount', width: 80, render: (v: string[]) => v?.length || 0 },
+            { title: '项目', dataIndex: 'workspaceIds', key: 'workspaceNames', width: 250, render: (v: string[]) => {
+              if (!v?.length) return '-';
+              const names = v.map(id => workspaceNameMap[id] || id);
+              if (names.length <= 2) return names.join(', ');
+              return (
+                <Tooltip title={names.join(', ')}>
+                  <span>{names.slice(0, 2).join(', ')} 等{names.length}个项目</span>
+                </Tooltip>
+              );
+            }},
             { title: '需求数', dataIndex: 'storyCount', key: 'storyCount', width: 100 },
             { title: '任务数', dataIndex: 'taskCount', key: 'taskCount', width: 100 },
             { title: '迭代数', dataIndex: 'iterationCount', key: 'iterationCount', width: 80 },
             { title: '状态', dataIndex: 'status', key: 'status', width: 100, render: renderSyncStatus },
             { title: '耗时', key: 'duration', width: 100, render: (_v: unknown, r: SyncJob) => r.finishedAt ? `${Math.round((new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)}秒` : '-' },
-            { title: '操作', key: 'action', width: 80, render: (_v: unknown, r: SyncJob) => r.status === 'failed' ? <Button size="small" type="link">重试</Button> : null },
+            { title: '操作', key: 'action', width: 80, render: (_v: unknown, r: SyncJob) => r.status === 'failed' ? <Button size="small" type="link" onClick={() => handleRetry(r)}>重试</Button> : null },
           ]}
           pagination={false}
           size="small"
+          className="linear-table"
         />
-      </Card>
+      </div>
+
+      {/* Linear风格全局样式 */}
+      <style jsx global>{`
+        /* ========================================
+           页面容器 - 克制设计
+           ======================================== */
+        .tapd-data-manager {
+          padding: 20px 24px;
+          max-width: 100%;
+          margin: 0 auto;
+          min-height: calc(100vh - 120px);
+          background: #fafafa;
+        }
+
+        .page-header-linear {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+          padding-bottom: 16px;
+          border-bottom: 1px solid #f0f0f0;
+        }
+
+        .header-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .header-icon {
+          font-size: 20px;
+          color: #1677ff;
+        }
+
+        .header-title {
+          font-size: 18px;
+          font-weight: 600;
+          color: #262626;
+          margin: 0;
+        }
+
+        /* ========================================
+           分区容器 - 统一样式
+           ======================================== */
+        .section-linear {
+          background: #fff;
+          border: 1px solid #f0f0f0;
+          border-radius: 6px;
+          margin-bottom: 16px;
+          overflow: hidden;
+        }
+
+        .section-highlight {
+          border-color: #1677ff;
+          box-shadow: 0 0 0 1px rgba(22, 119, 255, 0.08);
+        }
+
+        .section-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #262626;
+          padding: 14px 16px;
+          border-bottom: 1px solid #f0f0f0;
+          background: #fafafa;
+        }
+
+        .section-header-with-tag,
+        .section-header-with-action,
+        .section-header-with-icon {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 14px 16px;
+          border-bottom: 1px solid #f0f0f0;
+          background: #fafafa;
+        }
+
+        .section-header-collapsible {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 14px 16px;
+          cursor: pointer;
+          transition: background 0.15s ease;
+          user-select: none;
+        }
+
+        .section-header-collapsible:hover {
+          background: #f5f5f5;
+        }
+
+        /* ========================================
+           表单布局 - Grid系统
+           ======================================== */
+        .form-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 16px;
+          padding: 16px;
+        }
+
+        @media (max-width: 768px) {
+          .form-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .form-item {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .form-item-full {
+          grid-column: 1 / -1;
+        }
+
+        .form-item-action {
+          grid-column: 1 / -1;
+          display: flex;
+          align-items: flex-end;
+        }
+
+        .form-label {
+          font-size: 13px;
+          font-weight: 500;
+          color: #595959;
+        }
+
+        .range-picker-wrapper {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .form-hint {
+          font-size: 12px;
+          color: #8c8c8c;
+          white-space: nowrap;
+        }
+
+        /* ========================================
+           配置内容区
+           ======================================== */
+        .config-content {
+          padding: 16px;
+        }
+
+        .config-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 0;
+          border-bottom: 1px solid #fafafa;
+        }
+
+        .config-row:last-child {
+          border-bottom: none;
+        }
+
+        .config-row-highlight {
+          background: #e6f4ff;
+          margin: -16px -16px 0 -16px;
+          padding: 12px 16px;
+          border-radius: 6px 6px 0 0;
+          border-bottom: 1px solid #bae7ff;
+        }
+
+        .config-label-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 500;
+          color: #262626;
+        }
+
+        .config-label {
+          font-size: 13px;
+          color: #595959;
+          min-width: 70px;
+        }
+
+        .config-subsection {
+          margin-top: 16px;
+          padding-top: 16px;
+          border-top: 1px solid #f0f0f0;
+        }
+
+        .subsection-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          font-weight: 600;
+          color: #262626;
+          margin-bottom: 12px;
+        }
+
+        .subsection-content {
+          padding-left: 8px;
+        }
+
+        .sync-time-info {
+          font-size: 13px;
+          color: #595959;
+          margin-bottom: 10px;
+        }
+
+        .time-picker-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+
+        .config-hint {
+          font-size: 12px;
+          color: #8c8c8c;
+          margin-top: 4px;
+        }
+
+        .status-info div {
+          font-size: 13px;
+          line-height: 2;
+        }
+
+        .status-info span {
+          color: #8c8c8c;
+          margin-right: 8px;
+        }
+
+        .config-actions {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 20px;
+          padding-top: 16px;
+          border-top: 1px solid #f0f0f0;
+        }
+
+        .empty-config {
+          text-align: center;
+          padding: 40px 20px;
+          color: #bfbfbf;
+        }
+
+        .empty-config p {
+          margin: 0;
+          font-size: 13px;
+        }
+
+        /* ========================================
+           进度显示
+           ======================================== */
+        .progress-content {
+          padding: 16px;
+        }
+
+        .progress-msg {
+          margin: 10px 0 6px;
+          color: #595959;
+          font-size: 13px;
+        }
+
+        .progress-detail {
+          color: #8c8c8c;
+          font-size: 12px;
+          margin: 0;
+        }
+
+        /* ========================================
+           统计条状布局（复用Linear风格）
+           ======================================== */
+        .stats-bar-linear {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 1px;
+          background: #f0f0f0;
+          border: 1px solid #f0f0f0;
+          border-radius: 6px;
+          overflow: hidden;
+          margin: 16px;
+        }
+
+        .stat-item-linear {
+          background: #fff;
+          padding: 14px 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          transition: background 0.15s ease;
+        }
+
+        .stat-item-linear:hover {
+          background: #fafafa;
+        }
+
+        .stat-icon-linear {
+          width: 36px;
+          height: 36px;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 16px;
+          flex-shrink: 0;
+        }
+
+        .stat-icon-blue { background: #e6f4ff; color: #1677ff; }
+        .stat-icon-orange { background: #fff7e6; color: #fa8c16; }
+        .stat-icon-green { background: #f6ffed; color: #52c41a; }
+        .stat-icon-red { background: #fff1f0; color: #ff4d4f; }
+        .stat-icon-purple { background: #f9f0ff; color: #722ed1; }
+        .stat-icon-cyan { background: #e6fffb; color: #13c2c2; }
+        .stat-icon-default { background: #fafafa; color: #8c8c8c; }
+
+        .stat-content-linear {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .stat-label-linear {
+          font-size: 12px;
+          color: #8c8c8c;
+          margin-bottom: 2px;
+        }
+
+        .stat-value-linear {
+          font-size: 18px;
+          font-weight: 600;
+          color: #262626;
+          line-height: 1.2;
+        }
+
+        .stat-suffix-linear {
+          font-size: 12px;
+          color: #8c8c8c;
+          font-weight: 400;
+          margin-left: 4px;
+        }
+
+        .stats-footer {
+          display: flex;
+          justify-content: space-between;
+          padding: 12px 16px;
+          border-top: 1px solid #f0f0f0;
+          font-size: 12px;
+          color: #8c8c8c;
+        }
+
+        /* ========================================
+           筛选区域
+           ======================================== */
+        .filter-section {
+          padding: 16px;
+          background: #fafafa;
+          border-bottom: 1px solid #f0f0f0;
+        }
+
+        .filter-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 13px;
+          font-weight: 500;
+          color: #595959;
+          margin-bottom: 12px;
+        }
+
+        .filter-item {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .filter-label {
+          font-size: 11px;
+          color: #8c8c8c;
+        }
+
+        /* ========================================
+           表格样式 - 克制设计
+           ======================================== */
+        .linear-table .ant-table {
+          font-size: 13px;
+        }
+
+        .linear-table .ant-table-thead > tr > th {
+          background: #fafafa !important;
+          font-weight: 600 !important;
+          color: #595959 !important;
+          border-bottom: 1px solid #f0f0f0 !important;
+          padding: 10px 12px !important;
+          font-size: 12px !important;
+        }
+
+        .linear-table .ant-table-tbody > tr:hover > td {
+          background: #fafafa !important;
+        }
+
+        .linear-table .ant-table-tbody > tr > td {
+          padding: 8px 12px !important;
+          border-bottom: 1px solid #f5f5f5 !important;
+          font-size: 12px !important;
+        }
+
+        /* ========================================
+           标签页样式
+           ======================================== */
+        .linear-tabs .ant-tabs-nav {
+          margin-bottom: 0 !important;
+          padding: 0 16px;
+          background: #fafafa;
+        }
+
+        .linear-tabs .ant-tabs-tab {
+          padding: 12px 16px !important;
+          font-size: 13px !important;
+        }
+
+        /* ========================================
+           响应式适配
+           ======================================== */
+        @media (max-width: 768px) {
+          .tapd-data-manager {
+            padding: 12px 16px;
+          }
+
+          .stats-bar-linear {
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .page-header-linear {
+            flex-direction: column;
+            gap: 12px;
+            align-items: flex-start;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -614,6 +614,56 @@ model SystemSetting {
 }
 
 // ============================================================
+// 字段展示配置（迭代计划页面）
+// ============================================================
+
+/// 字段类型枚举
+enum FieldType {
+  FIXED       @map("fixed")        // 固定字段
+  CUSTOM      @map("custom")       // 自定义字段
+  ROLE_EFFORT @map("role_effort")   // 角色工时统计字段
+}
+
+/// 数据类型枚举
+enum FieldDataType {
+  TEXT        @map("text")         // 文本
+  LINK_TEXT   @map("link_text")    // 链接文本
+  NUMBER      @map("number")       // 数字
+  DATE        @map("date")         // 日期
+  MULTI_LINE  @map("multi_line")   // 多行文本
+}
+
+/// 迭代计划字段展示配置
+model SprintFieldConfig {
+  id          String      @id @default(cuid()) @map("id")
+  
+  // 基本信息
+  name        String      @map("name")           // 字段名称（中文，如：ID、标题、优先级）
+  fieldKey    String      @map("field_key")      // 字段标识符（英文，如：tapdId、title、priority）
+  fieldType   FieldType   @map("field_type")     // 字段类型
+  dataType    FieldDataType @map("data_type")    // 数据类型
+  
+  // TAPD映射
+  tapdField   String?     @map("tapd_field")     // 对应的TAPD字段名
+  
+  // 显示控制
+  isVisible   Boolean     @default(true) @map("is_visible")   // 是否可见
+  isEditable  Boolean     @default(false) @map("is_editable") // 是否可编辑
+  sortOrder   Int         @default(0) @map("sort_order")     // 排序值（越小越靠前）
+  width       Int?        @map("width")           // 列宽（可选）
+  
+  // 关联信息
+  teamConfigId String?    @map("team_config_id")  // 所属团队配置ID（可选，为空表示全局默认配置）
+  
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  @@index([teamConfigId])
+  @@index([sortOrder])
+  @@map("sprint_field_config")
+}
+
+// ============================================================
 // TAPD 数据落库表
 // ============================================================
 
@@ -820,6 +870,40 @@ model TapdSyncRecord {
   @@map("tapd_sync_record")
 }
 
+/// TAPD 自动同步配置
+model AutoSyncConfig {
+  id               String    @id @default(cuid()) @map("id")
+  
+  isEnabled        Boolean   @map("is_enabled") @default(true)
+  name             String    @map("name") @default("默认自动同步")
+  
+  syncTimes        Json      @map("sync_times") @default("[\"02:00\"]")
+  timezone         String    @map("timezone") @default("Asia/Shanghai")
+  
+  defaultDaysBack  Int       @map("default_days_back") @default(90)
+  dataTypes        Json      @map("data_types") @default("[\"story\",\"task\",\"iteration\"]")
+  workspaceIds     Json?     @map("workspace_ids")
+  
+  syncStrategy     String    @map("sync_strategy") @default("incremental")
+  retryOnFailure   Boolean   @map("retry_on_failure") @default(true)
+  maxRetries       Int       @map("max_retries") @default(3)
+  
+  notifyOnComplete Boolean   @map("notify_on_complete") @default(false)
+  notifyOnError     Boolean   @map("notify_on_error") @default(true)
+  notifyChannels    Json?     @map("notify_channels")
+  
+  lastExecutedAt   DateTime? @map("last_executed_at")
+  lastStatus       String?   @map("last_status")
+  nextExecuteAt    DateTime? @map("next_execute_at")
+  createdAt        DateTime  @map("created_at") @default(now())
+  updatedAt        DateTime  @map("updated_at") @updatedAt
+  createdBy        String?   @map("created_by")
+  
+  @@index([isEnabled])
+  @@index([lastExecutedAt])
+  @@map("auto_sync_config")
+}
+
 /// TAPD 缺陷数据（完整字段）
 model TapdBug {
   id              String    @id @map("id")
@@ -934,4 +1018,106 @@ model TapdWorkflowSyncLog {
   @@index([workspaceId])
   @@index([createdAt])
   @@map("tapd_workflow_sync_log")
+}
+
+/// TAPD 角色人员映射
+/// 存储 TAPD 项目中成员姓名与 4 大研发角色（后端/前端/移动端/测试）的归属关系
+/// 用于将需求 owner 自动归类到对应角色，计算各角色工作量
+model TapdMemberRoleMapping {
+  id          Int      @id @default(autoincrement())
+  workspaceId String   @map("workspace_id")      // TAPD 项目ID
+  memberName  String   @map("member_name")       // 真实姓名(与 owner 字段匹配)
+  role        String   @map("role")              // 后端/前端/移动端/测试/PO/UED/借调人员/其他
+  roleId      String?  @map("role_id")           // TAPD 角色ID(如 1137329286001000590)
+  isActive    Boolean  @map("is_active") @default(true)
+  remark      String?  @map("remark")
+  createdAt   DateTime @map("created_at") @default(now())
+  updatedAt   DateTime @map("updated_at") @updatedAt
+
+  @@unique([workspaceId, memberName, role])
+  @@index([workspaceId])
+  @@index([memberName])
+  @@map("tapd_member_role_mapping")
+}
+
+/// TAPD 项目角色配置
+/// 存储每个项目的角色列表（通过 /roles 接口同步）
+model TapdProjectRole {
+  id          Int      @id @default(autoincrement())
+  workspaceId String   @map("workspace_id")
+  roleId      String   @map("role_id")           // TAPD 角色ID
+  roleName    String   @map("role_name")         // 角色名称
+  isSystem    Boolean  @map("is_system") @default(false)  // 是否系统内置角色
+  isActive    Boolean  @map("is_active") @default(true)
+  syncedAt    DateTime @map("synced_at") @default(now())
+  createdAt   DateTime @map("created_at") @default(now())
+  updatedAt   DateTime @map("updated_at") @updatedAt
+
+  @@unique([workspaceId, roleId])
+  @@index([workspaceId])
+  @@map("tapd_project_role")
+}
+
+/// 分析报告历史记录
+model AnalysisReport {
+  id          String   @id @default(cuid()) @map("id")
+  title       String   @map("title")
+  meta        String?  @map("meta")           // 查询条件描述
+  mode        String   @map("mode")           // natural | advanced
+  projects    Json     @map("projects")       // 项目ID列表
+  dateStart   String   @map("date_start")
+  dateEnd     String   @map("date_end")
+  status      String?  @map("status")         // 状态筛选
+  reportType  String   @map("report_type")    // full | summary | trend
+  htmlContent String   @map("html_content")   // 完整HTML报告内容
+  metadata    Json     @map("metadata")       // KPI等元数据JSON
+  createdBy   String?  @map("created_by")
+
+  createdAt   DateTime @map("created_at") @default(now())
+  updatedAt   DateTime @map("updated_at") @updatedAt
+
+  @@index([createdAt])
+  @@map("analysis_report")
+}
+
+// ============================================================
+// TAPD 项目级配置（字段映射 + 自定义设置）
+// ============================================================
+
+/// TAPD项目配置
+/// 用于存储每个TAPD项目的特殊字段映射（如优先级字段、提测时间字段等）
+model TapdProjectConfig {
+  id              String   @id @default(cuid()) @map("id")
+  
+  // 项目标识
+  workspaceId     String   @unique @map("workspace_id")    // TAPD项目ID
+  projectName     String?  @map("project_name")            // 项目名称（缓存，便于查看）
+  
+  // 字段映射配置（JSON格式，灵活扩展）
+  /// 优先级字段映射
+  priorityField   String?  @map("priority_field")          // 优先级字段名（如：custom_field_four, priority）
+  priorityFieldType String? @map("priority_field_type")    // 优先级字段类型：number | text
+  
+  /// 提测时间字段映射
+  testDateField   String?  @map("test_date_field")         // 提测时间字段名
+  
+  /// 其他自定义字段映射（JSON对象）
+  customFieldMappings Json?   @map("custom_field_mappings") // {"field_key": "tapd_field_name"}
+  
+  // 自动检测结果缓存
+  autoDetectedAt  DateTime? @map("auto_detected_at")       // 最后自动检测时间
+  detectionConfidence Float?  @map("detection_confidence") // 检测置信度 (0-1)
+  
+  // 状态
+  isActive        Boolean  @default(true) @map("is_active") // 是否启用
+  isAutoDetected  Boolean  @default(false) @map("is_auto_detected") // 是否为自动检测结果
+  
+  // 审计
+  createdBy       String?  @map("created_by")              // 创建人/来源
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([workspaceId])
+  @@index([isActive])
+  @@map("tapd_project_config")
 }

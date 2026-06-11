@@ -137,19 +137,52 @@ async function callTapdApi(
     case 'workflow':
       path = '/workflows';
       break;
+    case 'user_groups':
+    case 'usergroup':
+      path = '/user_groups';
+      break;
+    case 'workspace_members':
+    case 'members':
+      path = '/workspaces/' + workspaceId + '/members';
+      break;
+    case 'roles':
+    case 'role':
+      path = '/roles';
+      break;
+    // 支持发布计划API（新版和旧版）
+    case 'new_releases':
+      path = '/new_releases';
+      break;
+    case 'releases':
+    case 'release':
+      path = '/releases';  // 旧版发布计划API
+      break;
+    // 支持获取字段信息等特殊API
     default:
-      throw new Error(`不支持的服务: ${service}`);
+      // 如果 action 包含下划线，可能是特殊API（如 get_fields_info）
+      if (action.includes('_')) {
+        path = `/${service}/${action}`;
+      } else {
+        throw new Error(`不支持的服务: ${service}`);
+      }
   }
 
   // 构造查询参数
   const queryParams = new URLSearchParams();
-  queryParams.append('workspace_id', workspaceId);
   
-  // 添加额外参数
+  // 特殊API（如 get_fields_info）不需要默认添加 workspace_id
+  const isSpecialApi = action.includes('_');
+  
+  // 添加额外参数（包括workspace_id如果用户提供了）
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
       queryParams.append(key, String(value));
     }
+  }
+  
+  // 如果不是特殊API且没有提供workspace_id，则使用默认值
+  if (!isSpecialApi && !queryParams.has('workspace_id')) {
+    queryParams.append('workspace_id', workspaceId);
   }
 
   // 添加 fields 参数（优化传输，只返回指定字段）
@@ -158,6 +191,9 @@ async function callTapdApi(
   }
 
   const url = `${TAPD_API_BASE}${path}?${queryParams.toString()}`;
+
+  // 调试日志：打印实际请求的URL
+  console.log(`[TAPD Skill Proxy] 请求URL: ${url}`);
 
   // 设置 30 秒超时
   const controller = new AbortController();
@@ -171,7 +207,14 @@ async function callTapdApi(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      // 尝试读取错误响应体
+      let errorBody = '';
+      try {
+        errorBody = await response.text();
+      } catch (e) {
+        // 忽略读取错误
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorBody}`);
     }
 
     const data = await response.json();

@@ -414,6 +414,132 @@ async function main() {
   }
 
   console.log(`\nCreated ${allProjects.length} projects total`);
+
+  // 7. 创建 TAPD 工作空间测试数据
+  const workspaces = [
+    { id: 'ws001', name: '效率平台', status: 'active' },
+    { id: 'ws002', name: '上岸鸭APP', status: 'active' },
+    { id: 'ws003', name: '大学生第三空间', status: 'active' },
+    { id: 'ws004', name: '移动端重构', status: 'active' },
+    { id: 'ws005', name: '数据中台', status: 'active' },
+  ];
+
+  for (const ws of workspaces) {
+    await prisma.tapdWorkspace.upsert({
+      where: { id: ws.id },
+      update: {},
+      create: ws,
+    });
+  }
+  console.log(`Created ${workspaces.length} TAPD workspaces`);
+
+  // 8. 团队配置测试数据已移除
+  // 现在系统会自动从TAPD API同步真实工作区数据到team_config表
+  // 如需手动创建测试团队，请取消下面的注释
+  /*
+  const teamConfigNames = ['前端开发组', '后端开发组', '移动端开发组', '测试组'];
+  await prisma.teamConfig.deleteMany({
+    where: { name: { in: teamConfigNames } },
+  });
+
+  const teamConfigs = [
+    {
+      name: '前端开发组',
+      tapdProjectIds: JSON.stringify(['ws001', 'ws003']),
+      enableTeamRanking: true,
+      enableHrRanking: true,
+    },
+    {
+      name: '后端开发组',
+      tapdProjectIds: JSON.stringify(['ws001', 'ws002', 'ws005']),
+      enableTeamRanking: true,
+      enableHrRanking: true,
+    },
+    {
+      name: '移动端开发组',
+      tapdProjectIds: JSON.stringify(['ws004']),
+      enableTeamRanking: true,
+      enableHrRanking: true,
+    },
+    {
+      name: '测试组',
+      tapdProjectIds: JSON.stringify(['ws001', 'ws002', 'ws003']),
+      enableTeamRanking: true,
+      enableHrRanking: true,
+    },
+  ];
+
+  for (const tc of teamConfigs) {
+    await prisma.teamConfig.create({ data: tc });
+  }
+  console.log(`Created ${teamConfigs.length} team configs`);
+  */
+
+  // 9. 创建成员角色映射测试数据
+  const roleMappings = [
+    { workspaceId: 'ws001', memberName: '张三', role: 'frontend' },
+    { workspaceId: 'ws001', memberName: '李四', role: 'backend' },
+    { workspaceId: 'ws001', memberName: '王五', role: 'test' },
+    { workspaceId: 'ws002', memberName: '李四', role: 'backend' },
+    { workspaceId: 'ws002', memberName: '赵六', role: 'test' },
+    { workspaceId: 'ws003', memberName: '张三', role: 'frontend' },
+    { workspaceId: 'ws004', memberName: '孙七', role: 'mobile' },
+    { workspaceId: 'ws005', memberName: '周八', role: 'backend' },
+  ];
+
+  for (const rm of roleMappings) {
+    await prisma.tapdMemberRoleMapping.upsert({
+      where: {
+        workspaceId_memberName_role: {
+          workspaceId: rm.workspaceId,
+          memberName: rm.memberName,
+          role: rm.role,
+        },
+      },
+      update: {},
+      create: { ...rm, isActive: true },
+    });
+  }
+  console.log(`Created ${roleMappings.length} role mappings`);
+
+  // 10. 创建一些测试任务数据
+  const testTasks = [
+    // 前端任务 - 张三
+    { workspaceId: 'ws001', name: '首页改版优化', owner: '张三', status: 'in_progress', effort: 16, effortCompleted: 8, begin: new Date('2026-06-01'), due: new Date('2026-06-10') },
+    { workspaceId: 'ws001', name: '仪表盘组件开发', owner: '张三', status: 'todo', effort: 24, begin: new Date('2026-06-08'), due: new Date('2026-06-15') },
+    { workspaceId: 'ws003', name: '校园资讯模块UI', owner: '张三', status: 'in_progress', effort: 20, effortCompleted: 12, begin: new Date('2026-05-25'), due: new Date('2026-06-07') },
+
+    // 后端任务 - 李四
+    { workspaceId: 'ws001', name: 'API接口优化', owner: '李四', status: 'done', effort: 32, effortCompleted: 32, begin: new Date('2026-05-20'), due: new Date('2026-05-28') },
+    { workspaceId: 'ws001', name: '数据库性能调优', owner: '李四', status: 'in_progress', effort: 40, effortCompleted: 16, begin: new Date('2026-06-01'), due: new Date('2026-06-15') },
+    { workspaceId: 'ws002', name: '题库服务开发', owner: '李四', status: 'in_progress', effort: 48, effortCompleted: 20, begin: new Date('2026-05-28'), due: new Date('2026-06-18') },
+
+    // 测试任务 - 王五、赵六
+    { workspaceId: 'ws001', name: '首页功能测试', owner: '王五', status: 'in_progress', effort: 8, effortCompleted: 4, begin: new Date('2026-06-03'), due: new Date('2026-06-09') },
+    { workspaceId: 'ws002', name: '题库模块测试', owner: '赵六', status: 'todo', effort: 24, begin: new Date('2026-06-10'), due: new Date('2026-06-20') },
+    { workspaceId: 'ws003', name: '资讯模块测试', owner: '王五', status: 'todo', effort: 16, begin: new Date('2026-06-10'), due: new Date('2026-06-17') },
+
+    // 移动端任务 - 孙七
+    { workspaceId: 'ws004', name: 'APP首页重构', owner: '孙七', status: 'in_progress', effort: 40, effortCompleted: 18, begin: new Date('2026-05-27'), due: new Date('2026-06-14') },
+    { workspaceId: 'ws004', name: '列表页性能优化', owner: '孙七', status: 'todo', effort: 24, begin: new Date('2026-06-12'), due: new Date('2026-06-22') },
+
+    // 数据中台 - 周八
+    { workspaceId: 'ws005', name: 'ETL流程开发', owner: '周八', status: 'in_progress', effort: 56, effortCompleted: 24, begin: new Date('2026-05-22'), due: new Date('2026-06-19') },
+  ];
+
+  for (const task of testTasks) {
+    await prisma.tapdStory.create({
+      data: {
+        id: `story-${Math.random().toString(36).substr(2, 9)}`,
+        ...task,
+        priority: 'high',
+        created: new Date(),
+        modified: new Date(),
+      },
+    });
+  }
+  console.log(`Created ${testTasks.length} test tasks`);
+
   console.log('\nSeeding completed successfully!');
 }
 

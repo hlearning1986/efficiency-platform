@@ -48,6 +48,7 @@ export const sidebarMenuItems: MenuItem[] = [
   ]),
   getItem('效能看板', '/dashboard', <ThunderboltOutlined />, [
     getItem('需求交付大盘', '/dashboard/delivery-dashboard', <FundOutlined />),
+    getItem('智能分析报告', '/dashboard/analysis-report', <FileTextOutlined />),
     getItem('效能排名', '/efficiency/rankings', <TrophyOutlined />),
     getItem('人员评比', '/efficiency/members', <UserOutlined />),
     getItem('效能配置', '/efficiency/config', <ControlOutlined />),
@@ -59,7 +60,7 @@ export const sidebarMenuItems: MenuItem[] = [
   ]),
   getItem('资源管理', '/resources', <TeamOutlined />, [
     getItem('人力分布', '/resources/distribution', <PieChartOutlined />),
-    getItem('人力负荷', '/resources/workload', <FundOutlined />),
+    getItem('人力负荷', '/workload', <FundOutlined />),
     getItem('数据同步', '/resources/sync', <SyncOutlined />),
   ]),
   getItem('系统设置', '/settings', <SettingOutlined />, [

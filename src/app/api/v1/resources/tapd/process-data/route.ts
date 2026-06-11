@@ -143,21 +143,21 @@ export async function POST(req: NextRequest) {
     const iterationNameMap = new Map<string, string>();
     const allIterationIds = new Set<string>();
     for (const story of stories) {
-      const iid = String(story['iteration_id'] ?? '');
+      const iid = String(story['iterationId'] ?? '');
       if (iid && iid !== '0') allIterationIds.add(iid);
     }
     for (const task of tasks) {
-      const iid = String(task['iteration_id'] ?? '');
+      const iid = String(task['iterationId'] ?? '');
       if (iid && iid !== '0') allIterationIds.add(iid);
     }
     // 批量查询迭代名称（按 workspace_id 分组查询）
     const wsIdSet = new Set<string>();
     for (const story of stories) {
-      const wsId = String(story['workspace_id'] ?? '');
+      const wsId = String(story['workspaceId'] ?? '');
       if (wsId) wsIdSet.add(wsId);
     }
     for (const task of tasks) {
-      const wsId = String(task['workspace_id'] ?? '');
+      const wsId = String(task['workspaceId'] ?? '');
       if (wsId) wsIdSet.add(wsId);
     }
     // 从请求中获取 API 凭据（前端传入）
@@ -187,14 +187,23 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    // 将迭代名称写入 story 和 task
+    // 将迭代名称写入 story 和 task（只填充缺失的，不覆盖已有值）
     for (const story of stories) {
-      const iid = String(story['iteration_id'] ?? '');
-      story['iteration_name'] = iterationNameMap.get(iid) ?? iid;
+      const iid = String(story['iterationId'] ?? '');
+      // 优先保留数据库已有的 iterationName，只在为空时从映射表补充
+      if (!story['iterationName'] || String(story['iterationName']).trim() === '') {
+        const mapped = iterationNameMap.get(iid);
+        if (mapped) story['iterationName'] = mapped;
+        else if (iid && iid !== '0') story['iterationName'] = iid; // 无映射时用ID兜底
+      }
     }
     for (const task of tasks) {
-      const iid = String(task['iteration_id'] ?? '');
-      task['iteration_name'] = iterationNameMap.get(iid) ?? iid;
+      const iid = String(task['iterationId'] ?? '');
+      if (!task['iterationName'] || String(task['iterationName']).trim() === '') {
+        const mapped = iterationNameMap.get(iid);
+        if (mapped) task['iterationName'] = mapped;
+        else if (iid && iid !== '0') task['iterationName'] = iid;
+      }
     }
 
     // ============================================================
@@ -202,7 +211,7 @@ export async function POST(req: NextRequest) {
     // ============================================================
     const storyTaskMap = new Map<string, Record<string, unknown>[]>();
     for (const task of tasks) {
-      const parentStoryId = String(task['story_id'] ?? task['parent_id'] ?? '');
+      const parentStoryId = String(task['storyId'] ?? task['parentId'] ?? '');
       if (parentStoryId) {
         if (!storyTaskMap.has(parentStoryId)) {
           storyTaskMap.set(parentStoryId, []);
@@ -259,7 +268,7 @@ export async function POST(req: NextRequest) {
     // 读取 Story 的成本归属字段，将该值向下填充到所有关联的 Task
     for (const story of stories) {
       const storyId = String(story['id'] ?? '');
-      const wsId = String(story['workspace_id'] ?? '');
+      const wsId = String(story['workspaceId'] ?? '');
       const costFieldKey = resolveFieldName(wsId, '成本归属', defaultCostField);
       const storyCost = getFieldValue(story, costFieldKey);
       if (!storyCost) continue;
@@ -279,7 +288,7 @@ export async function POST(req: NextRequest) {
     // 读取 Story 的项目归属字段，将该值向下填充到所有关联的 Task
     for (const story of stories) {
       const storyId = String(story['id'] ?? '');
-      const wsId = String(story['workspace_id'] ?? '');
+      const wsId = String(story['workspaceId'] ?? '');
       const projectFieldKey = resolveFieldName(wsId, '项目归属', defaultProjectField);
       const storyProject = getFieldValue(story, projectFieldKey);
       if (!storyProject) continue;
@@ -307,15 +316,15 @@ export async function POST(req: NextRequest) {
 
       for (const task of relatedTasks) {
         totalEstimated += getNumberField(task, 'effort');
-        totalCompleted += getNumberField(task, 'effort_completed');
+        totalCompleted += getNumberField(task, 'effortCompleted');
         totalRemaining += getNumberField(task, 'remain');
       }
 
       // 将汇总工时写入 Story
-      story['task_estimated'] = totalEstimated;
-      story['task_completed'] = totalCompleted;
-      story['task_remaining'] = totalRemaining;
-      story['task_count'] = relatedTasks.length;
+      story['taskEstimated'] = totalEstimated;
+      story['taskCompleted'] = totalCompleted;
+      story['taskRemaining'] = totalRemaining;
+      story['taskCount'] = relatedTasks.length;
     }
 
     // ============================================================
@@ -326,10 +335,10 @@ export async function POST(req: NextRequest) {
     for (const story of stories) {
       // 优先用 Story 自身的 effort，如果没有则用 Task 汇总
       const storyEffort = getNumberField(story, 'effort');
-      const taskTotal = getNumberField(story, 'task_estimated');
+      const taskTotal = getNumberField(story, 'taskEstimated');
       const totalHours = storyEffort > 0 ? storyEffort : taskTotal;
       const reqCount = calculateRequirement(totalHours, rules);
-      story['requirement_count'] = reqCount;
+      story['requirementCount'] = reqCount;
       totalRequirement += reqCount;
     }
 
@@ -346,7 +355,7 @@ export async function POST(req: NextRequest) {
       const owners = storyMergedOwners.get(storyId);
       if (!owners) continue;
 
-      const reqCount = getNumberField(story, 'requirement_count');
+      const reqCount = getNumberField(story, 'requirementCount');
       for (const owner of owners) {
         personReqMap.set(owner, (personReqMap.get(owner) ?? 0) + reqCount);
       }
@@ -361,7 +370,7 @@ export async function POST(req: NextRequest) {
     personReqMap.forEach((count, name) => {
       personStats.push({
         name,
-        count,
+        count: Math.round(count * 10) / 10,
         ratio: totalRequirement > 0 ? Math.round((count / totalRequirement) * 10000) / 100 : 0,
       });
     });

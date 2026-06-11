@@ -25,3 +25,17 @@ body {
     text-wrap: balance;
   }
 }
+
+/* 临时移除的story行样式 */
+.removed-story-row {
+  background-color: #fafafa !important;
+  opacity: 0.7;
+}
+
+.removed-story-row:hover > td {
+  background: #f5f5f5 !important;
+}
+
+.removed-story-row td {
+  color: #999 !important;
+}

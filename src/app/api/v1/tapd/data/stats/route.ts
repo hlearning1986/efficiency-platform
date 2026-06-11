@@ -37,13 +37,135 @@ export async function GET(req: NextRequest) {
     const iterationId = searchParams.get('iterationId');
     const owner = searchParams.get('owner');
 
-    // 构建筛选条件 - 🛠️ 支持多选（IN查询）
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const storyWhere: Record<string, unknown> = {};
+    console.log('\n📊 [Stats API] 开始获取数据统计...');
     
-    // 🛠️ 使用 addInCondition 支持单值和多值
+    // ========== 🎯 新增：从工作流表加载状态映射（中文化） ==========
+    console.log('[Stats API] 正在加载工作流状态映射...');
+    
+    const workflowStatusRecords = await prisma.tapdWorkflowStatus.findMany({
+      where: {
+        system: 'story',
+        isActive: true,
+      },
+      select: {
+        statusKey: true,
+        statusValue: true,
+        workspaceId: true,
+      },
+    });
+
+    // 构建多层映射表
+    const statusKeyToChineseMap = new Map<string, string>();  // 英文 -> 中文
+    const chineseToKeysMap = new Map<string, Set<string>>();   // 中文 -> 英文集合
+    const knownChineseValues = new Set<string>();              // 已知的中文值
+    
+    // 🎯 临时存储：收集每个英文键的所有候选中文值（用于冲突解决）
+    const keyCandidatesMap = new Map<string, string[]>();
+
+    workflowStatusRecords.forEach(record => {
+      // 正向映射：英文键 -> 中文值（🆕 改为收集所有候选值）
+      if (!keyCandidatesMap.has(record.statusKey)) {
+        keyCandidatesMap.set(record.statusKey, []);
+      }
+      keyCandidatesMap.get(record.statusKey)!.push(record.statusValue);
+      
+      // 反向映射：中文值 -> 英文键集合
+      if (!chineseToKeysMap.has(record.statusValue)) {
+        chineseToKeysMap.set(record.statusValue, new Set());
+      }
+      chineseToKeysMap.get(record.statusValue)!.add(record.statusKey);
+      
+      // 记录所有中文值
+      knownChineseValues.add(record.statusValue);
+    });
+    
+    // 🎯 标准状态映射表（用于解决冲突时作为基准）
+    const standardStatusMapping: Record<string, string> = {
+      'new': '新建',
+      'planning': '规划中',
+      'developing': '开发中',
+      'testing': '测试中',
+      'released': '已发布',
+      'resolved': '已实现',
+      'closed': '已关闭',
+      'accepted': '已验收',
+      'rejected': '已拒绝',
+      'postponed': '需求暂停',
+    };
+    
+    // 🛠️ 冲突解决：从多个候选值中选择最佳映射
+    keyCandidatesMap.forEach((candidates, englishKey) => {
+      let bestMatch = candidates[0]; // 默认使用第一个
+      
+      // 策略1：优先使用标准映射
+      if (standardStatusMapping[englishKey] && candidates.includes(standardStatusMapping[englishKey])) {
+        bestMatch = standardStatusMapping[englishKey];
+        console.log(`[Stats API] 🔧 使用标准映射: "${englishKey}" → "${bestMatch}" (替代 "${candidates[0]}")`);
+      }
+      // 策略2：如果没有标准映射，选择最长的候选值（更完整）
+      else if (candidates.length > 1) {
+        bestMatch = candidates.reduce((longest, current) => 
+          current.length > longest.length ? current : longest
+        );
+        console.log(`[Stats API] 🔧 使用最长匹配: "${englishKey}" → "${bestMatch}" (从 ${candidates.join(', ')})`);
+      }
+      
+      statusKeyToChineseMap.set(englishKey, bestMatch);
+    });
+
+    console.log(`[Stats API] ✅ 加载 ${workflowStatusRecords.length} 条工作流配置`);
+    console.log(`[Stats API] ✅ 构建 ${statusKeyToChineseMap.size} 个英文→中文映射`);
+    console.log(`[Stats API] ✅ 发现 ${knownChineseValues.size} 个不同的中文状态值`);
+
+    // 构建筛选条件 - 🛠️ 支持多选（IN查询）
+    const storyWhere: Record<string, unknown> = {};
     addInCondition(storyWhere, 'workspaceId', workspaceId);
-    addInCondition(storyWhere, 'status', status);
+    
+    // 🎯 中文状态精确匹配（与 Query API 逻辑一致）
+    if (status && status !== 'null') {
+      const chineseLabels = parseMultiValue(status);
+      const hasChinese = chineseLabels.some(s => /[\u4e00-\u9fa5]/.test(s));
+      
+      if (hasChinese) {
+        console.log(`[Stats API] 🎯 中文状态筛选（统计）: [${chineseLabels.join(', ')}]`);
+        
+        const targetProjectIds = workspaceId ? parseMultiValue(workspaceId) : null;
+        const allOrConditions: any[] = [];
+        
+        for (const label of chineseLabels) {
+          const workflowWhere: any = {
+            system: 'story',
+            isActive: true,
+            statusValue: label,
+          };
+          if (targetProjectIds && targetProjectIds.length > 0) {
+            workflowWhere.workspaceId = { in: targetProjectIds };
+          }
+          
+          const mappings = await prisma.tapdWorkflowStatus.findMany({
+            where: workflowWhere,
+            select: { workspaceId: true, statusKey: true },
+          });
+          
+          mappings.forEach(m => {
+            allOrConditions.push({
+              workspaceId: m.workspaceId,
+              status: m.statusKey,
+            });
+          });
+        }
+        
+        if (allOrConditions.length > 0) {
+          (storyWhere as any).AND = [{ OR: allOrConditions }];
+          console.log(`[Stats API] ✅ 统计精确匹配: ${allOrConditions.length} 个组合`);
+        } else {
+          (storyWhere as any).id = '__no_match__';
+        }
+      } else {
+        addInCondition(storyWhere, 'status', status);
+      }
+    }
+    
     addInCondition(storyWhere, 'iterationId', iterationId);
     addInCondition(storyWhere, 'owner', owner);
 
@@ -133,6 +255,59 @@ export async function GET(req: NextRequest) {
     });
     const statusList = statusListRaw.filter((s) => s.status !== null && s.status !== '');
 
+    console.log(`[Stats API] 📋 数据库中找到 ${statusList.length} 个不同的状态值`);
+
+    // ========== ✅ 正确方案：从工作流表聚合中文状态 + 跨项目原始值 ==========
+    
+    // 1️⃣ 构建映射表：(workspaceId, statusKey) → statusValue（中文）
+    const workflowMap = new Map<string, string>();
+    workflowStatusRecords.forEach(r => {
+      workflowMap.set(`${r.workspaceId}|${r.statusKey}`, r.statusValue);
+    });
+    
+    // 2️⃣ 反向映射：中文 → 所有对应的原始值（跨项目聚合）
+    const chineseToRawValues = new Map<string, Set<string>>();
+    
+    // 先用工作流表的映射
+    workflowStatusRecords.forEach(r => {
+      if (!chineseToRawValues.has(r.statusValue)) {
+        chineseToRawValues.set(r.statusValue, new Set());
+      }
+      chineseToRawValues.get(r.statusValue)!.add(r.statusKey);
+    });
+    
+    // 3️⃣ 对于没有工作流映射的原始值，直接使用
+    statusList.forEach(s => {
+      const raw = s.status!;
+      let hasMapping = false;
+      
+      for (const [, values] of chineseToRawValues) {
+        if (values.has(raw)) {
+          hasMapping = true;
+          break;
+        }
+      }
+      
+      if (!hasMapping) {
+        if (!chineseToRawValues.has(raw)) {
+          chineseToRawValues.set(raw, new Set());
+        }
+        chineseToRawValues.get(raw)!.add(raw);
+      }
+    });
+    
+    // 4️⃣ 生成最终列表
+    const finalStatuses = Array.from(chineseToRawValues.entries())
+      .filter(([label]) => label && label.trim() !== '')
+      .map(([label, values]) => ({
+        value: label,                    // 中文标签用于选择和显示
+        label: label,                    // 下拉框显示中文
+        allValues: Array.from(values),   // 所有对应的数据库原始值
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+
+    console.log(`[Stats API] ✅ 状态列表：${statusList.length}个原始值 → ${finalStatuses.length}个中文标签`);
+
     return NextResponse.json({
       success: true,
       data: {
@@ -165,16 +340,17 @@ export async function GET(req: NextRequest) {
             .map((o) => o.owner)
             .filter(Boolean)
             .map((o) => ({ value: o!, label: o! })),
-          // 状态列表：从数据库动态获取 + 智能中文映射
-          statuses: statusList
-            .map((s) => s.status)
-            .filter(Boolean)
-            .sort()  // 排序以便去重后顺序一致
-            .filter((value, index, self) => self.indexOf(value) === index)  // 去重
-            .map((s) => ({
-              value: s!,
-              label: getStatusLabel(s!),
-            })),
+          
+          // ========== 🎯 状态列表：纯中文状态名称（已去重） ==========
+          statuses: finalStatuses,
+          
+          // 额外信息：工作流映射关系（供前端使用）
+          workflowMapping: {
+            keyToChinese: Object.fromEntries(statusKeyToChineseMap),
+            knownChineseValues: Array.from(knownChineseValues),
+            totalMappings: statusKeyToChineseMap.size,
+            hasWorkflowConfig: workflowStatusRecords.length > 0,
+          },
         },
       },
     });

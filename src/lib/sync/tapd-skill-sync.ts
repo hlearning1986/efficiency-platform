@@ -239,16 +239,44 @@ async function batchUpsertIterations(iterations: any[]) {
   }
 }
 
+// 🆕 批量同步Workspace数据
+async function batchUpsertWorkspaces(workspaces: { id: string; name: string }[]) {
+  const batchSize = 50;
+  for (let i = 0; i < workspaces.length; i += batchSize) {
+    const batch = workspaces.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (ws) => {
+      const id = String(ws.id);
+      const existing = await prisma.tapdWorkspace.findUnique({ where: { id } });
+      const data = {
+        name: String(ws.name || ''),
+        syncedAt: new Date(),
+      };
+      if (existing) await prisma.tapdWorkspace.update({ where: { id }, data });
+      else await prisma.tapdWorkspace.create({ data: { id, ...data } });
+    }));
+  }
+}
+
 function transformStory(item: any): any {
+  // 🛡️ 安全日期解析：过滤无效日期值（如 "0000-00-00"）
+  const parseDateSafe = (val: unknown): Date | null => {
+    if (val === null || val === undefined || val === '') return null;
+    const str = String(val).trim();
+    if (str === '0000-00-00' || str === '0000-00-00 00:00:00') return null;
+    const d = new Date(str);
+    if (isNaN(d.getTime()) || d.getFullYear() < 1900 || d.getFullYear() > 2100) return null;
+    return d;
+  };
+
   return {
     id: String(item.id || ''), name: String(item.name || ''), description: String(item.description || ''),
     status: String(item.status || ''), priority: String(item.priority || ''), owner: String(item.owner || ''),
     cc: String(item.cc || ''), creator: String(item.creator || ''),
-    created: item.created ? new Date(String(item.created)) : null,
-    modified: item.modified ? new Date(String(item.modified)) : null,
-    completed: item.completed ? new Date(String(item.completed)) : null,
-    begin: item.begin ? new Date(String(item.begin)) : null,
-    due: item.due ? new Date(String(item.due)) : null,
+    created: parseDateSafe(item.created),
+    modified: parseDateSafe(item.modified),
+    completed: parseDateSafe(item.completed),
+    begin: parseDateSafe(item.begin),
+    due: parseDateSafe(item.due),
     effort: parseFloat(String(item.effort)) || 0,
     effortCompleted: parseFloat(String(item.effort_completed)) || 0,
     workspaceId: String(item.workspace_id || ''),
@@ -281,13 +309,23 @@ function transformStory(item: any): any {
 }
 
 function transformTask(item: any): any {
+  // 🛡️ 安全日期解析：过滤无效日期值（如 "0000-00-00"）
+  const parseDateSafe = (val: unknown): Date | null => {
+    if (val === null || val === undefined || val === '') return null;
+    const str = String(val).trim();
+    if (str === '0000-00-00' || str === '0000-00-00 00:00:00') return null;
+    const d = new Date(str);
+    if (isNaN(d.getTime()) || d.getFullYear() < 1900 || d.getFullYear() > 2100) return null;
+    return d;
+  };
+
   return {
     id: String(item.id || ''), name: String(item.name || ''), description: String(item.description || ''),
     status: String(item.status || ''), priority: String(item.priority || ''), owner: String(item.owner || ''),
     creator: String(item.creator || ''),
-    created: item.created ? new Date(String(item.created)) : null,
-    modified: item.modified ? new Date(String(item.modified)) : null,
-    completed: item.completed ? new Date(String(item.completed)) : null,
+    created: parseDateSafe(item.created),
+    modified: parseDateSafe(item.modified),
+    completed: parseDateSafe(item.completed),
     effort: parseFloat(String(item.effort)) || 0,
     effortCompleted: parseFloat(String(item.effort_completed)) || 0,
     storyId: String(item.story_id || ''),
@@ -299,15 +337,25 @@ function transformTask(item: any): any {
 }
 
 function transformIteration(item: any): any {
+  // 🛡️ 安全日期解析：过滤无效日期值（如 "0000-00-00"）
+  const parseDateSafe = (val: unknown): Date | null => {
+    if (val === null || val === undefined || val === '') return null;
+    const str = String(val).trim();
+    if (str === '0000-00-00' || str === '0000-00-00 00:00:00') return null;
+    const d = new Date(str);
+    if (isNaN(d.getTime()) || d.getFullYear() < 1900 || d.getFullYear() > 2100) return null;
+    return d;
+  };
+
   return {
     id: String(item.id || ''), name: String(item.name || ''), workspaceId: String(item.workspace_id || ''),
     status: String(item.status || ''),
-    startDate: item.startdate ? new Date(String(item.startdate)) : null,
-    endDate: item.enddate ? new Date(String(item.enddate)) : null,
+    startDate: parseDateSafe(item.startdate),
+    endDate: parseDateSafe(item.enddate),
     creator: String(item.creator || ''),
-    created: item.created ? new Date(String(item.created)) : null,
-    modified: item.modified ? new Date(String(item.modified)) : null,
-    completed: item.completed ? new Date(String(item.completed)) : null,
+    created: parseDateSafe(item.created),
+    modified: parseDateSafe(item.modified),
+    completed: parseDateSafe(item.completed),
     rawJson: item,
     syncedAt: new Date(),
   };
@@ -321,8 +369,14 @@ export async function fullSyncWithSkill(options: SyncOptions): Promise<SyncResul
     const workspaceMap = await fetchWorkspaceMap(workspaceIds);
     onProgress?.(`已获取 ${workspaceMap.size} 个项目信息`, 10);
 
+    // 🆕 1.5 同步Workspace数据到数据库
+    if (workspaceMap.size > 0) {
+      await batchUpsertWorkspaces(Array.from(workspaceMap.entries()).map(([id, name]) => ({ id, name })));
+      onProgress?.(`已同步 ${workspaceMap.size} 个项目到数据库`, 15);
+    }
+
     // 2. 同步迭代数据并构建迭代名称映射
-    onProgress?.('开始同步迭代数据...', 15);
+    onProgress?.('开始同步迭代数据...', 20);
     const iterations = await fetchIterationsWithSkill(workspaceIds);
     
     // 构建 iteration_id -> iteration_name 映射

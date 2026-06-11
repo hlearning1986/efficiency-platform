@@ -570,7 +570,7 @@ export async function convertStatus(
  */
 export async function batchConvertStatuses(
   workspaceId: string,
-  rawStates: string[],
+  rawStates: string[] = [],
   system: 'story' | 'bug' = 'story'
 ): Promise<Map<string, string>> {
   
@@ -583,13 +583,19 @@ export async function batchConvertStatuses(
     },
   });
 
-  // 构建查找映射表
+  // 构建完整映射表（包含所有状态）
   const mappingMap = new Map<string, string>();
   allMappings.forEach(m => {
     mappingMap.set(m.statusKey, m.statusValue);
   });
 
-  // 转换结果
+  // 🎯 关键修复：如果传入的状态列表为空，直接返回完整映射表
+  // 这样 preloadWorkflowMappings() 可以预加载所有映射规则
+  if (rawStates.length === 0) {
+    return mappingMap;
+  }
+
+  // 转换传入的状态
   const resultMap = new Map<string, string>();
   
   rawStates.forEach(raw => {
