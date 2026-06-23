@@ -44,14 +44,11 @@ export default function SprintPlanningPage() {
     const loadFieldConfigs = async () => {
       try {
         const url = `/api/v1/agile/field-configs?teamConfigId=${selectedTeam}`;
-        console.log(`[SprintPage] 加载字段配置: ${url}`);
-
         const res = await fetch(url, { signal: controller.signal });
         const result = await res.json();
 
         if (result.success && Array.isArray(result.data)) {
           setFieldConfigs(result.data);
-          console.log(`[SprintPage] 字段配置加载成功: ${result.data.length} 个字段`);
         }
       } catch (error) {
         if ((error as Error).name !== 'AbortError') {

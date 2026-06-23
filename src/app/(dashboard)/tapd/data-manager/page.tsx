@@ -70,7 +70,6 @@ const getStatusConfig = (status: string, workflowStatusMap?: Record<string, stri
   
   // 🎯 0. 优先检查是否已经是中文（API已转换）
   if (/[\u4e00-\u9fa5]/.test(status) && status.length <= 8) {
-    console.log(`🎯 使用API转换后的中文状态: "${status}"`);
     return { color: getStatusColor(status), text: status };
   }
   
@@ -83,7 +82,6 @@ const getStatusConfig = (status: string, workflowStatusMap?: Record<string, stri
                          .find(([key]) => key.toLowerCase() === statusLower)?.[1];
     
     if (dynamicText) {
-      console.log(`🎯 使用动态状态映射: "${status}" → "${dynamicText}"`);
       return { color: getStatusColor(dynamicText), text: dynamicText };
     }
   }
@@ -713,7 +711,6 @@ export default function TapdDataManagerPage() {
     let fieldKey = getFieldKeyByBusinessName(businessName);
     
     if (fieldKey) {
-      console.log('✅ 从 mapping 找到 fieldKey:', fieldKey);
       
       // 转换为 camelCase
       const camelCaseKey = fieldKey
@@ -727,7 +724,6 @@ export default function TapdDataManagerPage() {
         .join('');
       
       const value = record[camelCaseKey];
-      console.log('📦 camelCaseKey:', camelCaseKey, '→ value:', value);
       console.groupEnd();
       return value || '-';
     }
@@ -739,7 +735,6 @@ export default function TapdDataManagerPage() {
       k.toLowerCase().includes('custom') && record[k]
     );
     
-    console.log('🔍 record 中的自定义字段:', customKeys);
     
     // 根据业务名称特征推断（使用精确匹配避免误判）
     for (const key of customKeys) {
@@ -768,7 +763,6 @@ export default function TapdDataManagerPage() {
         );
         
         if (isProjectField) {
-          console.log(`🎯 Fallback 成功 [项目归属]: ${key} → "${value}"`);
           console.groupEnd();
           return value;
         }
@@ -787,7 +781,6 @@ export default function TapdDataManagerPage() {
         );
         
         if (isCostField) {
-          console.log(`🎯 Fallback 成功 [成本归属]: ${key} → "${value}"`);
           console.groupEnd();
           return value;
         }
@@ -796,7 +789,6 @@ export default function TapdDataManagerPage() {
       // 其他字段的简单推断
       if (businessName === '按时提测' && 
           (valueLower === '是' || valueLower === '否' || valueLower === 'yes' || valueLower === 'no')) {
-        console.log(`🎯 Fallback 成功 [按时提测]: ${key} → "${value}"`);
         console.groupEnd();
         return value;
       }
@@ -1079,8 +1071,6 @@ export default function TapdDataManagerPage() {
   useEffect(() => {
     // #region debug-point mapping-watcher
     console.group('[DEBUG] customFieldMapping Watcher');
-    console.log('1️⃣ prevMapping:', Object.keys(prevMappingRef.current).length, 'keys');
-    console.log('2️⃣ current mapping:', Object.keys(customFieldMapping).length, 'keys');
     // #endregion
     
     const prevKeys = Object.keys(prevMappingRef.current);
@@ -1088,7 +1078,6 @@ export default function TapdDataManagerPage() {
     
     // 检测到映射从空变为有值（说明刚加载完成）
     if (prevKeys.length === 0 && currKeys.length > 0 && filterWorkspaceId) {
-      console.log('🎯 检测到 fieldMapping 刚加载完成！自动刷新表格数据...');
 
       // 延迟一帧确保 React 完成状态更新
       setTimeout(() => {
@@ -1130,10 +1119,8 @@ export default function TapdDataManagerPage() {
         }
 
         if (initialWorkspaceId) {
-          console.log('🌐 页面初始化：开始加载工作流状态映射, workspaceId:', initialWorkspaceId);
           await loadWorkflowStatusMap(initialWorkspaceId);
         } else {
-          console.log('⚠️ 页面初始化：未找到初始workspaceId，等待用户选择项目');
         }
       } catch (error) {
         console.error('❌ 初始化工作流状态映射失败:', error);
@@ -1159,9 +1146,6 @@ export default function TapdDataManagerPage() {
   const loadCustomFieldMapping = async (workspaceId: string | undefined) => {
     // #region debug-point loadCustomFieldMapping
     console.group(`[DEBUG] 🚀 loadCustomFieldMapping()`);
-    console.log('📥 接收参数 workspaceId:', workspaceId);
-    console.log('📥 参数类型:', typeof workspaceId);
-    console.log('📥 参数是否为空:', !workspaceId);
     // #endregion
     
     if (!workspaceId) {
@@ -1172,33 +1156,21 @@ export default function TapdDataManagerPage() {
     }
     
     try {
-      console.log(`🌐 开始请求 API: /api/v1/tapd/custom-fields?workspaceId=${workspaceId}`);
       
       const resp = await fetch(`/api/v1/tapd/custom-fields?workspaceId=${workspaceId}`);
       const result = await resp.json();
       
       // #region debug-point loadCustomFieldMapping-response
-      console.log('✅ API 请求成功');
-      console.log('📡 HTTP 状态:', resp.status);
-      console.log('📡 API Response:', result);
-      console.log('📡 result.success:', result.success);
-      console.log('📡 result.data:', result.data);
-      console.log('📡 result.data?.fieldMapping:', result.data?.fieldMapping);
       // #endregion
       
       if (result.success && result.data?.fieldMapping) {
         const newMapping = result.data.fieldMapping;
-        console.log(`🎯 准备更新 state: ${Object.keys(newMapping).length} 个字段映射`);
-        console.log('🎯 新映射内容:', newMapping);
         
         setCustomFieldMapping(newMapping);
         
         // 🔴 关键：标记映射已加载完成
         setMappingLoaded(true);
-        console.log('✅✅✅ mappingLoaded 已设置为 true！');
         
-        console.log('[Field Mapping] ✅✅✅ 已成功调用 setCustomFieldMapping()！');
-        console.log('[Field Mapping] 映射内容:', newMapping);
       } else {
         console.warn('[Field Mapping] ❌ API 返回异常或无 fieldMapping');
         console.warn('[Field Mapping]   result.success:', result.success);
@@ -1212,7 +1184,6 @@ export default function TapdDataManagerPage() {
     }
     
     // #region debug-point loadCustomFieldMapping-end
-    console.log('🏁 loadCustomFieldMapping() 执行完毕');
     console.groupEnd();
     // #endregion
   };
@@ -1224,7 +1195,6 @@ export default function TapdDataManagerPage() {
       // 如果选择了项目，加载第一个项目的字段映射和工作流状态映射
       if (Array.isArray(filterWorkspaceId) && filterWorkspaceId.length > 0) {
         const firstProjectId = filterWorkspaceId[0];
-        console.log('🔄 项目选择变化，开始加载配置, workspaceId:', firstProjectId);
 
         // 🛠️ 重置 mappingLoaded 状态（正在加载中）
         setMappingLoaded(false);
@@ -1235,10 +1205,8 @@ export default function TapdDataManagerPage() {
           loadWorkflowStatusMap(firstProjectId),  // 🆕 关键修复：同时加载工作流状态映射
         ]);
         
-        console.log(`✅ 项目 ${firstProjectId} 的所有配置已加载完成`);
       } else {
         // 未选择项目时，标记为已加载（不需要显示 loading）
-        console.log('⚠️ 未选择项目，跳过配置加载');
         setMappingLoaded(true);
         setCustomFieldMapping({});
         setWorkflowStatusMap({});  // 🆕 清空工作流状态映射
@@ -1256,27 +1224,22 @@ export default function TapdDataManagerPage() {
     }
     
     try {
-      console.log(`🌐 开始请求工作流状态映射 API: /api/v1/tapd/workflow-status-map?workspace_id=${workspaceId}&system=story`);
       
       const resp = await fetch(`/api/v1/tapd/workflow-status-map?workspace_id=${workspaceId}&system=story`);
       const result = await resp.json();
       
       if (result.success && result.data?.statusMap) {
         const newStatusMap = result.data.statusMap;
-        console.log(`✅ 工作流状态映射加载成功: ${Object.keys(newStatusMap).length} 个状态`);
-        console.log('📋 状态映射内容:', newStatusMap);
         
         setWorkflowStatusMap(newStatusMap);
       } else {
         console.warn('⚠️ 工作流状态映射 API 返回异常:', result);
         // 🎯 增强fallback：使用内置的完整映射作为备选
-        console.log('🔄 使用内置fallback映射...');
         setWorkflowStatusMap(getFallbackStatusMapping());
       }
     } catch (error) {
       console.error('❌ 加载工作流状态映射失败:', error);
       // 🎯 增强失败处理：使用内置的完整映射作为备选
-      console.log('🔄 API调用失败，使用内置fallback映射...');
       setWorkflowStatusMap(getFallbackStatusMapping());
     }
   };
@@ -1353,23 +1316,15 @@ export default function TapdDataManagerPage() {
         // 🎯 同步更新 workflowStatusMap（用于表格状态列的中文显示）
         if (result.data?.filters?.workflowMapping?.keyToChinese) {
           setWorkflowStatusMap(result.data.filters.workflowMapping.keyToChinese);
-          console.log('✅ [数据统计] 已同步更新 workflowStatusMap:', 
-            Object.keys(result.data.filters.workflowMapping.keyToChinese).length, '个映射');
         }
         
         // 🎯 输出工作流映射信息（调试用）
         if (result.data?.filters?.workflowMapping) {
           const wm = result.data.filters.workflowMapping;
-          console.log(`\n📊 [数据统计] ✅ 工作流状态映射已加载:`);
-          console.log(`   - 总映射数: ${wm.totalMappings}`);
-          console.log(`   - 工作流已配置: ${wm.hasWorkflowConfig ? '✅ 是' : '❌ 否'}`);
-          console.log(`   - 中文状态值 (${wm.knownChineseValues?.length || 0}个):`, wm.knownChineseValues?.slice(0, 5));
           
           if (result.data?.filters?.statuses) {
-            console.log(`\n   状态筛选选项 (${result.data.filters.statuses.length}个):`);
             result.data.filters.statuses.slice(0, 10).forEach((s: { label: string; value: string; isFromWorkflow?: boolean }) => {
               const mark = s.isFromWorkflow ? '✓' : ' ';
-              console.log(`     ${mark} "${s.label}" (${s.value})`);
             });
           }
         }
@@ -1637,7 +1592,6 @@ export default function TapdDataManagerPage() {
       // 🎯 状态筛选：直接发送中文标签，后端会做精确匹配
       if (Array.isArray(currentParams.status) && currentParams.status.length > 0) {
         const chineseLabels = currentParams.status.filter(s => s && s.trim() !== '');
-        console.log(`✅ 状态筛选（中文标签）: [${chineseLabels.join(', ')}]`);
         params.append('status', chineseLabels.join(','));
       }
       
@@ -1657,15 +1611,6 @@ export default function TapdDataManagerPage() {
         params.append('completedEnd', currentParams.completedRange[1].format('YYYY-MM-DD'));
       }
 
-      console.log('📡 loadTableData 请求参数:', {
-        type: activeTab,
-        page,
-        workspaceId: currentParams.workspaceId,
-        status: currentParams.status,
-        iterationId: currentParams.iterationId,
-        owner: currentParams.owner,
-      });
-
       const resp = await fetch(`/api/v1/tapd/data/query?${params.toString()}`);
       const result = await resp.json();
       if (result.success) {
@@ -1676,7 +1621,6 @@ export default function TapdDataManagerPage() {
           pageSize,
           total: result.total || 0 
         }));
-        console.log(`✅ 数据加载成功: ${result.data?.length || 0} 条记录, 总计 ${result.total || 0} 条`);
       }
     } catch (error) {
       console.error('加载数据明细失败:', error);
@@ -1689,19 +1633,11 @@ export default function TapdDataManagerPage() {
   useEffect(() => {
     // 🛠️ 修复Bug3: 如果正在切换项目，跳过自动加载（由triggerFilterChange处理）
     if (isProjectSwitchingRef.current) {
-      console.log('⏭️ 跳过自动加载（项目切换中）');
       return;
     }
 
     // 使用ref中的最新值，避免闭包陷阱
     const params = filterParamsRef.current;
-
-    console.log('🔄 筛选条件变化，自动触发数据加载:', {
-      workspaceId: params.workspaceId,
-      status: params.status,
-      iterationId: params.iterationId,
-      owner: params.owner,
-    });
 
     loadTableData();
     loadDataStats({
@@ -1722,7 +1658,6 @@ export default function TapdDataManagerPage() {
 
     // 设置新的防抖定时器
     filterDebounceRef.current = setTimeout(() => {
-      console.log('⏰ 防抖触发 - 执行筛选');
       const params = filterParamsRef.current;
       loadTableData(1, tablePagination.pageSize);
       loadDataStats({
@@ -1748,11 +1683,9 @@ export default function TapdDataManagerPage() {
       // 选择全选：选中所有选项（除了全选本身）
       const allValues = allOptions.map(opt => opt.value).filter(v => v !== '__ALL__');
       setter(allValues);
-      console.log('📝 全选触发，选中所有:', allValues.length, '项');
     } else {
       // 正常选择
       setter(selectedValues);
-      console.log('📝 多选变更，选中:', selectedValues.length, '项');
     }
 
     // 触发筛选
@@ -1781,7 +1714,6 @@ export default function TapdDataManagerPage() {
     setFilterCompletedRange(null);
 
     // 🛠️ 不需要手动调用loadDataStats，useEffect会自动触发
-    console.log('🔄 筛选条件已重置');
   };
   
   // 根据 activeTab 获取对应列（动态字段映射）

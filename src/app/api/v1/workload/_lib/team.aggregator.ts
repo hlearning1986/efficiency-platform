@@ -115,30 +115,6 @@ export async function buildTeamTree(
   // 注意：不再按姓名去重，同一人参与多个TAPD项目会生成多条记录
   const processedNames = new Set<string>();
 
-  // 调试：打印所有人员名称（前20个），帮助排查数据丢失
-  const allPersonNames = Array.from(ptMap.keys());
-  console.log(`[team.aggregator] 总人数(去重后): ${allPersonNames.length}, 前20人: ${allPersonNames.slice(0, 20).join(', ')}`);
-
-  // 检查 dailyBreakdowns 中是否有邓明霜的数据
-  const dengKey = allPersonNames.find(n => n.includes('邓明霜') || n.includes('deng'));
-  if (dengKey) {
-    console.log(`[team.aggregator] 找到邓明霜 key="${dengKey}", 任务数=${ptMap.get(dengKey)?.length}`);
-    console.log(`[team.aggregator] dailyBreakdowns有此key? ${dailyBreakdowns.has(dengKey)}`, dailyBreakdowns.get(dengKey));
-    console.log(`[team.aggregator] dailyActualHoursMap有此key? ${dailyActualHoursMap.has(dengKey)}`, dailyActualHoursMap.get(dengKey));
-    // 打印该人员的任务详情
-    const dengTasks = ptMap.get(dengKey) || [];
-    console.log(`[team.aggregator] 邓明霜任务详情:`);
-    dengTasks.slice(0, 5).forEach((t, i) => {
-      console.log(`  [${i}] ${t.name} | ws=${t.workspaceId} | effort=${t.effort} | begin=${t.begin} | due=${t.due} | status=${t.status}`);
-    });
-  } else {
-    // 尝试原始名称查找
-    console.log(`[team.aggregator] 未找到"邓明霜"，尝试模糊搜索...`);
-    const fuzzyMatch = allPersonNames.find(n => n.includes('邓') || n.includes('明') || n.includes('霜'));
-    if (fuzzyMatch) console.log(`[team.aggregator] 模糊匹配: "${fuzzyMatch}"`);
-    else console.log(`[team.aggregator] 所有人员名中无"邓/明/霜"字样`);
-  }
-
   for (const [pname, allPersonTasks] of ptMap) {
     // 跳过已处理的人员（实现按姓名去重 - 仅用于跳过无效人员）
     if (processedNames.has(pname)) {
@@ -200,7 +176,6 @@ export async function buildTeamTree(
 
     // 如果仍未匹配到角色，跳过该人员
     if (!role) {
-      console.log(`[team.aggregator] Skip unconfigured person: ${pname}`);
       processedNames.add(pname);
       continue;
     }

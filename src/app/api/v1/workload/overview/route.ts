@@ -203,12 +203,6 @@ export async function GET(req: NextRequest) {
         new Set()
       );
       dailyBreakdowns.set(name, breakdown);
-
-      // 调试：检查邓明霜的每日工时
-      if (name.includes('邓明霜') || name.includes('deng')) {
-        const totalHours = Object.values(breakdown).reduce((s, h) => s + h, 0);
-        console.log(`[overview] dailyBreakdowns key="${name}", 任务数=${tasks.length}, 总预估工时=${totalHours}h`, JSON.stringify(breakdown));
-      }
     }
 
     // ⭐ 新增：为每个人计算每日实际工时（来自 Timesheet）

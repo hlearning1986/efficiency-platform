@@ -159,19 +159,16 @@ export async function getProjectNameMap(): Promise<Map<string, string>> {
       // ⭐ 判断：如果名称看起来像纯数字/ID，尝试从TAPD API获取真实名称
       let finalName = ws.name;
       if (!finalName || /^\d+$/.test(finalName) || finalName.startsWith('项目')) {
-        console.log(`[data.provider] Workspace ${ws.id} 名称无效(${ws.name})，尝试从API获取...`);
         try {
           const apiName = await fetchWorkspaceNameFromAPI(ws.id);
           if (apiName && !/^\d+$/.test(apiName)) {
             finalName = apiName;
-            console.log(`[data.provider] 从API获取到真实名称: ${ws.id} -> ${apiName}`);
             // 更新数据库
             try {
               await prisma.tapdWorkspace.update({
                 where: { id: ws.id },
                 data: { name: apiName },
               });
-              console.log(`[data.provider] 已更新数据库: workspace ${ws.id} -> ${apiName}`);
             } catch (updateErr) {
               console.warn('[data.provider] 更新workspace名称失败:', updateErr);
             }
@@ -209,11 +206,6 @@ export async function getProjectNameMap(): Promise<Map<string, string>> {
       }
     }
 
-    // ⭐ 最终日志：输出映射结果
-    console.log(`[data.provider] getProjectNameMap 完成，共 ${map.size} 个项目`);
-    for (const [id, name] of map.entries()) {
-      console.log(`  - ${id}: "${name}"`);
-    }
   } catch (error) {
     console.error('[data.provider] getProjectNameMap error:', error);
   }
@@ -259,8 +251,6 @@ async function fetchWorkspaceNameFromAPI(workspaceId: string): Promise<string | 
     // 参考: https://open.tapd.cn/document/api-doc/API文档/api_reference/workspace/get_workspace_info.html
     const apiUrl = `https://api.tapd.cn/workspaces/get_workspace_info?workspace_id=${workspaceId}`;
 
-    console.log(`[data.provider] 调用TAPD Workspace API: ${apiUrl}`);
-
     const response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
@@ -276,17 +266,10 @@ async function fetchWorkspaceNameFromAPI(workspaceId: string): Promise<string | 
 
     const json = await response.json();
 
-    console.log(`[data.provider] TAPD Workspace API 原始响应:`, JSON.stringify(json).slice(0, 500));
-
     // 解析返回的数据结构（根据官方文档）
     // 官方格式: { status: 1, data: { Workspace: { id: "...", name: "..." } }, info: "success" }
     if (json?.status === 1 && json?.data?.Workspace) {
       const workspaceData = json.data.Workspace;
-      console.log(`[data.provider] ✅ 成功解析Workspace数据:`, {
-        id: workspaceData.id,
-        name: workspaceData.name,
-        prettyName: workspaceData.pretty_name,
-      });
       return workspaceData.name;
     }
 
@@ -298,12 +281,11 @@ async function fetchWorkspaceNameFromAPI(workspaceId: string): Promise<string | 
       json?.data;
 
     if (workspaceData?.name) {
-      console.log(`[data.provider] ✅ 使用兼容格式解析成功:`, workspaceData.name);
       return workspaceData.name;
     }
 
     console.warn(
-      '[data.provider] ⚠️ TAPD workspace API 返回数据结构异常:',
+      '[data.provider] TAPD workspace API 返回数据结构异常:',
       JSON.stringify(json).slice(0, 500)
     );
     return null;
@@ -353,7 +335,6 @@ export async function getWorkspaceData(
       const apiTasks = await fetchTasksFromAPI(workspaceId, dateRange);
       if (apiTasks.length > 0) {
         taskList = apiTasks;
-        console.log(`[data.provider] Workspace ${workspaceId}: ${taskList.length} tasks from API`);
       } else {
         throw new Error('API返回空数据');
       }
@@ -362,7 +343,6 @@ export async function getWorkspaceData(
       
       // 策略2：回退到本地数据库
       taskList = await fetchTasksFromDB(workspaceId, dateRange);
-      console.log(`[data.provider] Workspace ${workspaceId}: ${taskList.length} tasks from DB`);
     }
 
     // ---- 3. 处理多人任务拆分 ----
@@ -427,7 +407,6 @@ export async function getWorkspaceData(
       }
     }
 
-    console.log(`[data.provider] Workspace ${workspaceId}: ${taskList.length} tasks (raw), ${tasks.length} tasks (after multi-owner split)`);
   } catch (error) {
     console.error(`[data.provider] getWorkspaceData(${workspaceId}) error:`, error);
     // 返回空结果而非抛出异常，保证系统可用性
@@ -475,7 +454,6 @@ export async function getWorkspaceTimesheets(
   try {
     const apiData = await fetchTimesheetsFromAPI(workspaceId, dateRange);
     if (apiData.length > 0) {
-      console.log(`[data.provider] Workspace ${workspaceId}: ${apiData.length} timesheet records from API`);
       return apiData;
     }
   } catch (apiError) {
@@ -485,7 +463,6 @@ export async function getWorkspaceTimesheets(
   // 策略2：回退到本地数据库
   try {
     const dbData = await fetchTimesheetsFromDB(workspaceId, dateRange);
-    console.log(`[data.provider] Workspace ${workspaceId}: ${dbData.length} timesheet records from DB`);
     return dbData;
   } catch (dbError) {
     console.error(`[data.provider] 数据库获取Timesheet也失败:`, dbError);
@@ -571,8 +548,6 @@ async function fetchTimesheetsFromAPI(
       });
     }
 
-    console.log(`[data.provider] TAPD API返回 ${items.length} 条原始记录，有效记录 ${timesheets.length} 条`);
-    
     return timesheets;
 
   } catch (error) {
@@ -680,8 +655,6 @@ async function fetchTasksFromAPI(
   ].join(',');
   const apiUrl = `https://api.tapd.cn/tasks?workspace_id=${workspaceId}&limit=200&page=1&fields=${requiredFields}`;
 
-  console.log(`[data.provider] 调用TAPD Task API: ${apiUrl}`);
-
   const resp = await fetch(apiUrl, {
     method: 'GET',
     headers: {
@@ -698,41 +671,6 @@ async function fetchTasksFromAPI(
 
   // TAPD API返回格式: { data: [{ Task: {...} }, ...], info: "success" }
   const rawItems = result.data || [];
-
-  console.log(`[data.provider] TAPD Task API返回 ${rawItems.length} 条原始记录`);
-
-  // 调试：打印第一条任务的完整字段，确认TAPD实际返回的字段名
-  if (rawItems.length > 0) {
-    const sampleTask = rawItems[0].Task || rawItems[0];
-    console.log(`[data.provider] ⭐ TAPD任务样例字段:`, Object.keys(sampleTask).join(', '));
-    // 打印所有包含日期/时间的关键字段
-    const dateFields = {};
-    for (const [k, v] of Object.entries(sampleTask)) {
-      if (k.toLowerCase().includes('date') || k.toLowerCase().includes('start') ||
-          k.toLowerCase().includes('end') || k.toLowerCase().includes('due') ||
-          k.toLowerCase().includes('begin') || k.toLowerCase().includes('expect') ||
-          k.toLowerCase().includes('dead') || k.toLowerCase().includes('complete')) {
-        dateFields[k] = v;
-      }
-    }
-    if (Object.keys(dateFields).length > 0) {
-      console.log(`[data.provider] ⭐ TAPD日期相关字段:`, JSON.stringify(dateFields));
-    } else {
-      console.log(`[data.provider] ⚠️ TAPD任务中未找到任何日期相关字段！`);
-    }
-    // 检查邓明霜相关的任务
-    const dengTasks = rawItems.filter((item: any) => {
-      const t = item.Task || item;
-      return t.owner && (t.owner.includes('邓明霜') || t.owner.includes('deng'));
-    });
-    if (dengTasks.length > 0) {
-      console.log(`[data.provider] ⭐ 邓明霜相关任务数: ${dengTasks.length}`);
-      dengTasks.slice(0, 2).forEach((item: any, i: number) => {
-        const t = item.Task || item;
-        console.log(`[data.provider]   [${i}] ${t.name} | owner=${t.owner} | 全部字段:`, JSON.stringify(t).slice(0, 500));
-      });
-    }
-  }
 
   // 转换为统一格式并按时间范围过滤
   const filteredTasks = rawItems
@@ -765,8 +703,6 @@ async function fetchTasksFromAPI(
       // 条件：任务开始 <= 查询结束 且 任务结束 >= 查询开始
       return (taskBegin <= rangeEnd && taskDue >= rangeStart);
     });
-
-  console.log(`[data.provider] 过滤后剩余 ${filteredTasks.length} 条任务`);
 
   return filteredTasks;
 }
